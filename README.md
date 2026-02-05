@@ -5,6 +5,8 @@ A local TTS application that generates voiceovers with synced SRT captions. Buil
 ## Features
 
 - **Text-to-Speech**: Generate natural-sounding voiceovers from text
+- **Multiple TTS Engines**: Coqui TTS (simple) and GPT-SoVITS (voice cloning)
+- **Voice Cloning**: Clone any voice with just a few seconds of reference audio
 - **Synced Captions**: Automatically create SRT/VTT files with word-level timing
 - **Apple Silicon Optimized**: Uses MPS (Metal Performance Shaders) for GPU acceleration
 - **Flexible Output**: Master files by default, with optional chunk and selection exports
@@ -14,13 +16,13 @@ A local TTS application that generates voiceovers with synced SRT captions. Buil
 
 - macOS with Apple Silicon (M1/M2/M3)
 - Python 3.9+
-- 8GB+ RAM recommended
+- 8GB+ RAM recommended (16GB+ for GPT-SoVITS)
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/mira-voice-studio.git
+git clone https://github.com/8bitbyadog/mira-voice-studio.git
 cd mira-voice-studio
 
 # Create virtual environment
@@ -29,6 +31,9 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -e .
+
+# (Optional) Install GPT-SoVITS for voice cloning
+./scripts/install_gptsovits.sh
 ```
 
 ## Quick Start
@@ -45,6 +50,31 @@ voice_studio --list-voices
 
 # Use a specific voice and speed
 voice_studio -i script.txt --voice vits --speed 1.1
+```
+
+## TTS Engines
+
+### Coqui TTS (Default)
+
+Simple, reliable TTS with several built-in voices:
+
+```bash
+voice_studio -i script.txt --engine coqui --voice default
+voice_studio -i script.txt --engine coqui --voice vits
+```
+
+### GPT-SoVITS (Voice Cloning)
+
+Advanced voice cloning with reference audio:
+
+```bash
+# With a trained custom voice
+voice_studio -i script.txt --engine gptsovits --voice my_voice
+
+# Zero-shot cloning with reference audio
+voice_studio -i script.txt --engine gptsovits \
+  --ref-audio reference.wav \
+  --ref-text "This is what I'm saying in the reference audio."
 ```
 
 ## Output Structure
@@ -77,6 +107,7 @@ voice_studio -i script.txt --in-time 0:32 --out-time 1:45
 usage: voice_studio [-h] --input INPUT [--output OUTPUT] [--voice VOICE]
                     [--speed SPEED] [--pause PAUSE] [--word-level]
                     [--export-chunks] [--in-time IN] [--out-time OUT]
+                    [--engine ENGINE] [--ref-audio FILE] [--ref-text TEXT]
                     [--list-voices]
 
 Options:
@@ -89,14 +120,41 @@ Options:
   --export-chunks   Export individual sentence chunks
   --in-time         Selection start time (e.g., "0:32" or "32")
   --out-time        Selection end time (e.g., "1:45" or "105")
+  --engine, -e      TTS engine: coqui, gptsovits, auto (default: auto)
+  --ref-audio       Reference audio for GPT-SoVITS voice cloning
+  --ref-text        Transcript of reference audio
   --list-voices     List available voice models
   --whisper-model   Whisper model size (tiny/base/small/medium/large)
+```
+
+## Voice Models
+
+### Adding Custom GPT-SoVITS Voices
+
+Create a folder in `~/mira_voice_studio/models/custom/` with:
+
+```
+my_voice/
+├── reference.wav        # 3-10 seconds of clear speech
+├── reference.txt        # Transcription of the audio
+└── config.json          # Optional metadata
+```
+
+### Downloading Pretrained Models
+
+```bash
+# Download all models
+python scripts/download_models.py --type all
+
+# Download specific models
+python scripts/download_models.py --type gptsovits
+python scripts/download_models.py --type whisper --whisper-size base
 ```
 
 ## Development Roadmap
 
 - [x] **Phase 1**: Core pipeline (CLI) with Coqui TTS
-- [ ] **Phase 2**: GPT-SoVITS integration
+- [x] **Phase 2**: GPT-SoVITS integration
 - [ ] **Phase 3**: Gradio UI - Generate tab
 - [ ] **Phase 4**: Gradio UI - Train tab (recording, import)
 - [ ] **Phase 5**: Gradio UI - Models tab

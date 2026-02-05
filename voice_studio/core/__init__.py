@@ -14,6 +14,7 @@ Contains the main processing pipeline:
 from voice_studio.core.text_processor import TextProcessor, Sentence
 from voice_studio.core.tts_engine import TTSEngine, TTSResult
 from voice_studio.core.tts_coqui import CoquiTTS
+from voice_studio.core.tts_gptsovits import GPTSoVITS
 from voice_studio.core.audio_stitcher import AudioStitcher, StitchedAudio
 from voice_studio.core.aligner import WhisperAligner, AlignmentResult, WordTiming
 from voice_studio.core.srt_generator import SRTGenerator
@@ -29,6 +30,7 @@ __all__ = [
     "TTSEngine",
     "TTSResult",
     "CoquiTTS",
+    "GPTSoVITS",
     # Audio
     "AudioStitcher",
     "StitchedAudio",

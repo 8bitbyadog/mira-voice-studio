@@ -33,8 +33,15 @@ examples:
   # Specify output folder
   voice_studio -i script.txt -o ~/Desktop/my_video/
 
-  # Use specific voice
-  voice_studio -i script.txt --voice default --speed 1.1
+  # Use specific Coqui voice
+  voice_studio -i script.txt --voice vits --speed 1.1
+
+  # Use GPT-SoVITS with trained voice
+  voice_studio -i script.txt --engine gptsovits --voice my_voice
+
+  # Use GPT-SoVITS with reference audio (zero-shot)
+  voice_studio -i script.txt --engine gptsovits \\
+    --ref-audio reference.wav --ref-text "Hello, this is my voice."
 
   # List available voices
   voice_studio --list-voices
@@ -123,29 +130,73 @@ examples:
         help="Suppress progress output",
     )
 
+    parser.add_argument(
+        "--engine", "-e",
+        type=str,
+        choices=["coqui", "gptsovits", "auto"],
+        default="auto",
+        help="TTS engine to use (default: auto)",
+    )
+
+    parser.add_argument(
+        "--ref-audio",
+        type=str,
+        default=None,
+        help="Reference audio file for GPT-SoVITS voice cloning",
+    )
+
+    parser.add_argument(
+        "--ref-text",
+        type=str,
+        default=None,
+        help="Transcript of reference audio for GPT-SoVITS",
+    )
+
     return parser
 
 
 def list_voices():
     """List available voice models."""
     from voice_studio.core.tts_coqui import CoquiTTS
+    from voice_studio.core.tts_gptsovits import GPTSoVITS
 
-    print("\nAvailable Voice Models:")
+    print("\n" + "=" * 50)
+    print("Available Voice Models")
+    print("=" * 50)
+
+    # Coqui TTS voices
+    print("\nCoqui TTS (--engine coqui):")
     print("-" * 40)
-
     try:
-        tts = CoquiTTS()
-        voices = tts.list_voices()
-
-        for voice in voices:
+        coqui = CoquiTTS()
+        coqui_voices = coqui.list_voices()
+        for voice in coqui_voices:
             print(f"  • {voice}")
-
-        print("\nUse --voice <name> to select a voice.")
-        print("Default: 'default' (Tacotron2-DDC)")
-
     except Exception as e:
-        print(f"Error loading TTS engine: {e}")
-        sys.exit(1)
+        print(f"  (Error loading Coqui: {e})")
+
+    # GPT-SoVITS voices
+    print("\nGPT-SoVITS (--engine gptsovits):")
+    print("-" * 40)
+    try:
+        gptsovits = GPTSoVITS()
+        gptsovits_voices = gptsovits.list_voices()
+        if gptsovits_voices:
+            for voice in gptsovits_voices:
+                print(f"  • {voice}")
+        else:
+            print("  (No custom voices found)")
+            print("  Add voices to: ~/mira_voice_studio/models/custom/")
+    except Exception as e:
+        print(f"  (Error loading GPT-SoVITS: {e})")
+
+    print("\n" + "-" * 40)
+    print("Usage:")
+    print("  voice_studio -i script.txt --voice default")
+    print("  voice_studio -i script.txt --engine gptsovits --voice my_voice")
+    print("\nFor GPT-SoVITS with reference audio:")
+    print("  voice_studio -i script.txt --engine gptsovits \\")
+    print("    --ref-audio reference.wav --ref-text 'Hello world'")
 
 
 def main():
@@ -164,6 +215,7 @@ def main():
 
     # Import here to avoid slow startup for --help
     from voice_studio.core.tts_coqui import CoquiTTS
+    from voice_studio.core.tts_gptsovits import GPTSoVITS
     from voice_studio.core.aligner import WhisperAligner
     from voice_studio.core.output_manager import OutputManager
     from voice_studio.core.selection import Selection, SelectionExporter
@@ -193,13 +245,52 @@ def main():
         print("Error: Input text is empty")
         sys.exit(1)
 
+    # Determine which TTS engine to use
+    engine = args.engine
+    if engine == "auto":
+        # Use GPT-SoVITS if ref-audio provided or voice looks like a custom model
+        if args.ref_audio or "/" in args.voice or args.voice not in ["default", "fast", "vits", "vits_neon"]:
+            # Check if GPT-SoVITS has this voice
+            try:
+                gptsovits = GPTSoVITS()
+                if args.voice in gptsovits.list_voices():
+                    engine = "gptsovits"
+                else:
+                    engine = "coqui"
+            except Exception:
+                engine = "coqui"
+        else:
+            engine = "coqui"
+
     # Initialize TTS engine
     if not args.quiet:
-        print(f"\nLoading TTS engine (voice: {args.voice})...")
+        print(f"\nLoading TTS engine: {engine} (voice: {args.voice})...")
 
     try:
-        tts = CoquiTTS()
-        tts.load_voice(args.voice)
+        if engine == "gptsovits":
+            tts = GPTSoVITS()
+
+            # Set reference audio if provided
+            if args.ref_audio:
+                ref_audio_path = Path(args.ref_audio)
+                if not ref_audio_path.exists():
+                    print(f"Error: Reference audio not found: {args.ref_audio}")
+                    sys.exit(1)
+                tts.set_reference(
+                    audio_path=ref_audio_path,
+                    text=args.ref_text
+                )
+                if not args.quiet:
+                    print(f"  Reference audio: {ref_audio_path}")
+                # Mark as loaded for direct reference use
+                tts._loaded = True
+                tts._current_voice = "custom_reference"
+            else:
+                tts.load_voice(args.voice)
+        else:
+            tts = CoquiTTS()
+            tts.load_voice(args.voice)
+
     except Exception as e:
         print(f"Error loading voice '{args.voice}': {e}")
         sys.exit(1)
