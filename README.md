@@ -236,8 +236,8 @@ The Train tab provides everything you need to create custom voice models:
 - [x] **Phase 2**: GPT-SoVITS integration
 - [x] **Phase 3**: Gradio UI - Generate tab
 - [x] **Phase 4**: Gradio UI - Train tab (recording, import)
-- [ ] **Phase 5**: Gradio UI - Models tab
-- [ ] **Phase 6**: Gradio UI - Settings tab
+- [x] **Phase 5**: Gradio UI - Models tab
+- [x] **Phase 6**: Gradio UI - Settings tab
 - [ ] **Phase 7**: Training backend
 - [ ] **Phase 8**: Automation lanes
 

@@ -10,6 +10,8 @@ from typing import Optional
 
 from voice_studio.ui.tab_generate import create_generate_tab
 from voice_studio.ui.tab_train import create_train_tab
+from voice_studio.ui.tab_models import create_models_tab
+from voice_studio.ui.tab_settings import create_settings_tab
 from voice_studio.ui.styles import get_custom_css
 from voice_studio.utils.settings import get_settings
 
@@ -56,37 +58,13 @@ def create_app() -> gr.Blocks:
             with gr.Tab("Train", id="train", elem_classes=["main-tab"]):
                 train_components = create_train_tab()
 
-            # Models Tab (placeholder for Phase 5)
+            # Models Tab
             with gr.Tab("Models", id="models", elem_classes=["main-tab"]):
-                gr.Markdown(
-                    """
-                    ## Voice Models
+                models_components = create_models_tab()
 
-                    *Coming in Phase 5*
-
-                    You'll be able to:
-                    - View all installed voices
-                    - Test voices with sample text
-                    - Import/export voice models
-                    - Download new pretrained models
-                    """
-                )
-
-            # Settings Tab (placeholder for Phase 6)
+            # Settings Tab
             with gr.Tab("Settings", id="settings", elem_classes=["main-tab"]):
-                gr.Markdown(
-                    """
-                    ## Settings
-
-                    *Coming in Phase 6*
-
-                    You'll be able to configure:
-                    - Default output paths
-                    - Audio settings
-                    - Caption preferences
-                    - Keyboard shortcuts
-                    """
-                )
+                settings_components = create_settings_tab()
 
         # Footer with keyboard shortcut hint
         gr.Markdown(

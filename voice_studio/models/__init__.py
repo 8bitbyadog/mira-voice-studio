@@ -7,4 +7,9 @@ Phase 5 implementation:
 - Download pretrained models
 """
 
-# Placeholder for Phase 5
+from voice_studio.models.manager import ModelManager, VoiceModel
+
+__all__ = [
+    "ModelManager",
+    "VoiceModel",
+]
