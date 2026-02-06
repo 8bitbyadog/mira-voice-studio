@@ -9,6 +9,7 @@ Contains the main processing pipeline:
 - SRT/VTT generation
 - Manifest creation
 - Output management
+- Automation lanes
 """
 
 from voice_studio.core.text_processor import TextProcessor, Sentence
@@ -21,6 +22,15 @@ from voice_studio.core.srt_generator import SRTGenerator
 from voice_studio.core.manifest import ManifestGenerator, ChunkInfo
 from voice_studio.core.output_manager import OutputManager
 from voice_studio.core.selection import Selection, SelectionExporter
+from voice_studio.core.automation import (
+    AutomationProject,
+    AutomationLane,
+    AutomationPoint,
+    AutomationParameter,
+    SentenceAutomation,
+    InterpolationType,
+    PARAMETER_CONFIG,
+)
 
 __all__ = [
     # Text processing
@@ -46,4 +56,12 @@ __all__ = [
     # Selection
     "Selection",
     "SelectionExporter",
+    # Automation
+    "AutomationProject",
+    "AutomationLane",
+    "AutomationPoint",
+    "AutomationParameter",
+    "SentenceAutomation",
+    "InterpolationType",
+    "PARAMETER_CONFIG",
 ]

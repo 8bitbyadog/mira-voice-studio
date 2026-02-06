@@ -21,6 +21,12 @@ from voice_studio.core.srt_generator import SRTGenerator
 from voice_studio.core.output_manager import OutputManager, GenerationResult
 from voice_studio.core.selection import Selection, SelectionExporter
 from voice_studio.core.manifest import ManifestGenerator
+from voice_studio.core.automation import AutomationProject
+from voice_studio.ui.components.automation_panel import (
+    create_automation_panel,
+    update_sentence_list,
+    get_automation_project,
+)
 from voice_studio.utils.settings import get_settings
 from voice_studio.utils.audio_utils import format_duration
 from voice_studio.utils.file_utils import open_in_finder
@@ -85,10 +91,11 @@ def generate_voiceover(
     speed: float,
     output_folder: str,
     word_level: bool,
+    automation_state: Dict = None,
     progress: gr.Progress = gr.Progress()
 ) -> Tuple[Optional[str], str, str, Dict]:
     """
-    Generate voiceover from text.
+    Generate voiceover from text with optional automation.
 
     Returns:
         Tuple of (audio_path, status_message, output_info, generation_data)
@@ -101,6 +108,10 @@ def generate_voiceover(
     with _generation_lock:
         try:
             progress(0, desc="Initializing...")
+
+            # Parse automation state
+            automation = get_automation_project(automation_state) if automation_state else None
+            use_automation = automation is not None
 
             # Parse voice selection
             if ":" in voice:
@@ -143,7 +154,7 @@ def generate_voiceover(
             processor = TextProcessor()
             sentences = processor.process(text)
 
-            # Generate TTS
+            # Generate TTS with per-sentence automation
             total_sentences = len(sentences)
             _current_tts_results = []
 
@@ -151,13 +162,25 @@ def generate_voiceover(
                 progress_pct = 0.2 + (0.6 * (i / total_sentences))
                 progress(progress_pct, desc=f"Generating sentence {i + 1}/{total_sentences}...")
 
-                result = tts.generate(sentence, speed=speed)
+                # Get speed for this sentence (automation or global)
+                if use_automation:
+                    params = automation.get_sentence_params(sentence.index, total_sentences)
+                    sentence_speed = params.get("speed", speed)
+                else:
+                    sentence_speed = speed
+
+                result = tts.generate(sentence, speed=sentence_speed)
                 _current_tts_results.append(result)
 
-            # Stitch audio
+            # Stitch audio with automation
             progress(0.85, desc="Stitching audio...")
             stitcher = AudioStitcher(pause_ms=300, sample_rate=44100)
-            stitched = stitcher.stitch(_current_tts_results)
+
+            if use_automation:
+                progress(0.85, desc="Stitching with automation...")
+                stitched = stitcher.stitch_with_automation(_current_tts_results, automation)
+            else:
+                stitched = stitcher.stitch(_current_tts_results)
 
             # Run alignment
             alignment = None
@@ -388,6 +411,18 @@ def create_generate_tab() -> Dict[str, Any]:
             )
             components["generate_btn"] = generate_btn
 
+    # Automation Panel (Ableton-style per-sentence control)
+    auto_components, auto_state = create_automation_panel()
+    components["automation"] = auto_components
+    components["auto_state"] = auto_state
+
+    # Wire up script input to update automation timeline
+    script_input.change(
+        fn=update_sentence_list,
+        inputs=[script_input, auto_state],
+        outputs=[auto_state, auto_components["timeline"]]
+    )
+
     # Progress and status
     with gr.Row():
         with gr.Column():
@@ -468,10 +503,10 @@ def create_generate_tab() -> Dict[str, Any]:
 
     components["preview_section"] = preview_section
 
-    # Wire up the generate button
+    # Wire up the generate button (with automation support)
     generate_btn.click(
         fn=generate_voiceover,
-        inputs=[script_input, voice_dropdown, speed_slider, output_folder, word_level_checkbox],
+        inputs=[script_input, voice_dropdown, speed_slider, output_folder, word_level_checkbox, auto_state],
         outputs=[audio_player, status_text, output_info, gen_data],
     ).then(
         fn=lambda: gr.update(visible=True),

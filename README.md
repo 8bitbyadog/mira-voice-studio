@@ -93,6 +93,24 @@ The Gradio web interface provides:
 | I | Set in point |
 | O | Set out point |
 
+### Automation Lanes
+
+Inspired by Ableton Live, automation lanes let you control parameters per-sentence:
+
+**Parameters:**
+- **Speed**: Speaking rate (0.5x - 2.0x) per sentence
+- **Volume**: Audio level (0.0 - 2.0) per sentence
+- **Pause**: Silence duration after each sentence (0 - 2000ms)
+- **Crossfade**: Smooth transitions between sentences (0 - 500ms)
+
+**Presets:**
+- Fade In / Fade Out / Fade In+Out
+- Speed Up / Slow Down (gradual ramps)
+- Dramatic Pauses (longer gaps at key points)
+- No Pauses (seamless flow)
+
+Enable automation in the Generate tab to access per-sentence controls.
+
 ## TTS Engines
 
 ### Coqui TTS (Default)
@@ -254,7 +272,7 @@ Progress is shown in the UI - you can stop training at any time.
 - [x] **Phase 5**: Gradio UI - Models tab
 - [x] **Phase 6**: Gradio UI - Settings tab
 - [x] **Phase 7**: Training backend
-- [ ] **Phase 8**: Automation lanes
+- [x] **Phase 8**: Automation lanes
 
 ## License
 

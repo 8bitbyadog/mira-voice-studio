@@ -6,6 +6,19 @@ Phase 3+ implementation:
 - Recording interface
 - Teleprompter
 - Help overlay
+- Automation lanes (Phase 8)
 """
 
-# Placeholder for Phase 3+
+from voice_studio.ui.components.automation_panel import (
+    create_automation_panel,
+    create_automation_state,
+    update_sentence_list,
+    get_automation_project,
+)
+
+__all__ = [
+    "create_automation_panel",
+    "create_automation_state",
+    "update_sentence_list",
+    "get_automation_project",
+]
