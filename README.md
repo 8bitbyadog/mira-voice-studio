@@ -227,8 +227,23 @@ The Train tab provides everything you need to create custom voice models:
 1. Go to **Train** → **Datasets**
 2. Select a dataset from the dropdown
 3. Review clips and toggle approval (✓/✗)
-4. Configure training options
-5. Click **Start Training** (Phase 7)
+4. Enter a name for your voice model
+5. Select training quality:
+   - **Quick** (~30 min): Basic voice adaptation
+   - **Standard** (~2 hours): Balanced quality
+   - **High Quality** (~6 hours): Best results
+6. Click **Check Requirements** to verify your dataset
+7. Click **Start Training** to begin
+
+### Training Requirements
+
+For best results:
+- **Minimum**: 5 clips, 30 seconds of audio
+- **Recommended**: 50+ clips, 5+ minutes of audio
+- **Optimal**: 100+ clips, 10+ minutes of audio
+
+Training uses your Mac's GPU (MPS on Apple Silicon) for acceleration.
+Progress is shown in the UI - you can stop training at any time.
 
 ## Development Roadmap
 
@@ -238,7 +253,7 @@ The Train tab provides everything you need to create custom voice models:
 - [x] **Phase 4**: Gradio UI - Train tab (recording, import)
 - [x] **Phase 5**: Gradio UI - Models tab
 - [x] **Phase 6**: Gradio UI - Settings tab
-- [ ] **Phase 7**: Training backend
+- [x] **Phase 7**: Training backend
 - [ ] **Phase 8**: Automation lanes
 
 ## License

@@ -20,6 +20,12 @@ from voice_studio.training.recorder import Recorder, RecordingSession
 from voice_studio.training.script_generator import ScriptGenerator
 from voice_studio.training.preprocessor import AudioPreprocessor
 from voice_studio.training.dataset import DatasetManager
+from voice_studio.training.trainer import (
+    VoiceTrainer,
+    TrainingConfig,
+    TrainingQuality,
+    TrainingProgress,
+)
 from voice_studio.utils.settings import get_settings
 from voice_studio.utils.audio_utils import format_duration
 
@@ -288,6 +294,154 @@ def toggle_clip_approval(dataset_name: str, clip_index: int) -> str:
     return f"Clip {clip_index} {status}"
 
 
+def check_training_requirements(dataset_name: str) -> str:
+    """Check if dataset meets training requirements."""
+    if not dataset_name:
+        return "Select a dataset first"
+
+    trainer = VoiceTrainer()
+    reqs = trainer.get_training_requirements(dataset_name)
+
+    if not reqs["valid"]:
+        issues_text = "\n".join([f"- {i}" for i in reqs["issues"]])
+        return f"""
+**Cannot train**
+
+Issues:
+{issues_text}
+"""
+
+    warnings_text = ""
+    if reqs["warnings"]:
+        warnings_text = "\n".join([f"- {w}" for w in reqs["warnings"]])
+        warnings_text = f"\n\n**Warnings:**\n{warnings_text}"
+
+    return f"""
+**Ready to train**
+
+- Clips: {reqs["clip_count"]}
+- Duration: {format_duration(reqs["duration_seconds"])}
+- Expected quality: {reqs["quality_estimate"]}
+{warnings_text}
+"""
+
+
+# Global trainer instance for stopping
+_current_trainer: Optional[VoiceTrainer] = None
+
+
+def run_training(
+    dataset_name: str,
+    voice_name: str,
+    quality: str,
+    progress=gr.Progress()
+) -> str:
+    """Run the training process with progress updates."""
+    global _current_trainer
+
+    if not dataset_name:
+        return "**Error:** Please select a dataset"
+    if not voice_name:
+        return "**Error:** Please enter a voice model name"
+
+    # Validate voice name
+    voice_name = voice_name.strip().replace(" ", "_")
+    if not voice_name:
+        return "**Error:** Invalid voice name"
+
+    # Check requirements
+    trainer = VoiceTrainer()
+    _current_trainer = trainer
+
+    reqs = trainer.get_training_requirements(dataset_name)
+    if not reqs["valid"]:
+        issues = "\n".join([f"- {i}" for i in reqs["issues"]])
+        return f"**Cannot train:**\n{issues}"
+
+    # Map quality string to enum
+    quality_map = {
+        "quick": TrainingQuality.QUICK,
+        "standard": TrainingQuality.STANDARD,
+        "high": TrainingQuality.HIGH,
+    }
+    training_quality = quality_map.get(quality, TrainingQuality.STANDARD)
+
+    # Create config
+    config = TrainingConfig(
+        dataset_name=dataset_name,
+        voice_name=voice_name,
+        quality=training_quality,
+    )
+
+    # Run training with progress updates
+    try:
+        result = None
+        for prog in trainer.train(config):
+            # Update Gradio progress
+            progress(prog.progress, desc=f"{prog.stage}: {prog.message}")
+
+            # Yield intermediate status
+            if prog.stage == "training":
+                status = f"""
+**Training in progress...**
+
+- Stage: {prog.stage}
+- Epoch: {prog.epoch}/{prog.total_epochs}
+- Loss: {prog.loss:.4f}
+- Progress: {prog.progress * 100:.1f}%
+
+{prog.message}
+"""
+            else:
+                status = f"""
+**{prog.stage.title()}...**
+
+{prog.message}
+
+Progress: {prog.progress * 100:.1f}%
+"""
+
+        # Get final result
+        if hasattr(trainer, '_final_loss'):
+            result_info = f"""
+**Training Complete!**
+
+- Voice Model: **{voice_name}**
+- Epochs: {config.epochs}
+- Final Loss: {trainer._final_loss:.4f}
+- Quality: {quality}
+
+Your voice model is now available in the **Models** tab.
+
+*You can use it by selecting "{voice_name}" in the Generate tab.*
+"""
+        else:
+            result_info = f"""
+**Training Complete!**
+
+- Voice Model: **{voice_name}**
+- Quality: {quality}
+
+Your voice model is now available in the **Models** tab.
+"""
+
+        return result_info
+
+    except Exception as e:
+        return f"**Training failed:**\n\n{str(e)}"
+    finally:
+        _current_trainer = None
+
+
+def stop_training() -> str:
+    """Stop the current training process."""
+    global _current_trainer
+    if _current_trainer:
+        _current_trainer.stop()
+        return "Stopping training... Please wait."
+    return "No training in progress"
+
+
 def create_train_tab() -> Dict[str, Any]:
     """
     Create the Train tab UI with sub-tabs.
@@ -501,10 +655,18 @@ def create_train_tab() -> Dict[str, Any]:
                         label="Training Quality"
                     )
 
-                    train_btn = gr.Button(
-                        "Start Training",
-                        variant="primary"
-                    )
+                    check_btn = gr.Button("Check Requirements")
+                    requirements_status = gr.Markdown("")
+
+                    with gr.Row():
+                        train_btn = gr.Button(
+                            "Start Training",
+                            variant="primary"
+                        )
+                        stop_btn = gr.Button(
+                            "Stop Training",
+                            variant="stop"
+                        )
 
                 with gr.Column():
                     training_status = gr.Markdown(
@@ -513,12 +675,13 @@ def create_train_tab() -> Dict[str, Any]:
 
                         Select a dataset and configure training options above.
 
-                        *Note: Training will use significant CPU/GPU resources.
-                        Your Mac may be slow during training.*
+                        **Tips:**
+                        - More data = better quality
+                        - 5+ minutes of audio recommended
+                        - Training uses GPU (MPS on Apple Silicon)
+                        - Your Mac may be slow during training
                         """
                     )
-
-                    training_progress = gr.Progress()
 
             # Wire up dataset controls
             def refresh_datasets():
@@ -545,26 +708,23 @@ def create_train_tab() -> Dict[str, Any]:
                 outputs=[dataset_info, clips_display]
             )
 
-            # Training placeholder
-            def start_training(dataset_name, voice_name, quality):
-                if not dataset_name:
-                    return "Please select a dataset"
-                if not voice_name:
-                    return "Please enter a voice model name"
+            # Check requirements button
+            check_btn.click(
+                fn=check_training_requirements,
+                inputs=[dataset_dropdown],
+                outputs=[requirements_status]
+            )
 
-                return f"""
-**Training Started**
-
-- Dataset: {dataset_name}
-- Voice: {voice_name}
-- Quality: {quality}
-
-*Training implementation coming in Phase 7...*
-"""
-
+            # Start training button
             train_btn.click(
-                fn=start_training,
+                fn=run_training,
                 inputs=[dataset_dropdown, voice_name_input, training_quality],
+                outputs=[training_status]
+            )
+
+            # Stop training button
+            stop_btn.click(
+                fn=stop_training,
                 outputs=[training_status]
             )
 
