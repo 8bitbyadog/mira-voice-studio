@@ -35,15 +35,17 @@ setup(
         "sounddevice>=0.4.6",
         "numpy>=1.24.0",
         "tqdm>=4.66.0",
+        "gradio>=4.0.0",
     ],
     extras_require={
-        "ui": ["gradio>=4.0.0"],
         "dev": ["pytest", "black", "flake8"],
     },
     entry_points={
         "console_scripts": [
             "voice_studio=voice_studio.cli:main",
+            "voice_studio_ui=voice_studio.ui.run:main",
             "mira=voice_studio.cli:main",
+            "mira_ui=voice_studio.ui.run:main",
         ],
     },
     classifiers=[

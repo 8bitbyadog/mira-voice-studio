@@ -7,6 +7,7 @@ A local TTS application that generates voiceovers with synced SRT captions. Buil
 - **Text-to-Speech**: Generate natural-sounding voiceovers from text
 - **Multiple TTS Engines**: Coqui TTS (simple) and GPT-SoVITS (voice cloning)
 - **Voice Cloning**: Clone any voice with just a few seconds of reference audio
+- **Web UI**: Beautiful Gradio interface for easy generation
 - **Synced Captions**: Automatically create SRT/VTT files with word-level timing
 - **Apple Silicon Optimized**: Uses MPS (Metal Performance Shaders) for GPU acceleration
 - **Flexible Output**: Master files by default, with optional chunk and selection exports
@@ -38,6 +39,23 @@ pip install -e .
 
 ## Quick Start
 
+### Web UI (Recommended)
+
+```bash
+# Launch the web interface
+voice_studio --ui
+
+# Or use the dedicated command
+voice_studio_ui
+
+# Custom port
+voice_studio --ui --port 8080
+```
+
+Then open http://127.0.0.1:7860 in your browser.
+
+### Command Line
+
 ```bash
 # Generate voiceover from a text file
 voice_studio -i script.txt
@@ -51,6 +69,29 @@ voice_studio --list-voices
 # Use a specific voice and speed
 voice_studio -i script.txt --voice vits --speed 1.1
 ```
+
+## Web UI Features
+
+The Gradio web interface provides:
+
+- **Voice Selection**: Dropdown with all available voices
+- **Speed Control**: Slider for speaking speed (0.5x - 2.0x)
+- **Live Preview**: Audio player with waveform
+- **I/O Points**: Set in/out points for partial exports
+- **Export Options**:
+  - Export Master (full audio + captions)
+  - Export Selection (just the selected portion)
+  - Export All Chunks (individual sentences)
+- **Progress Tracking**: Real-time generation progress
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| H | Toggle help overlay |
+| Space | Play/pause audio |
+| I | Set in point |
+| O | Set out point |
 
 ## TTS Engines
 
@@ -104,14 +145,14 @@ voice_studio -i script.txt --in-time 0:32 --out-time 1:45
 ## CLI Reference
 
 ```
-usage: voice_studio [-h] --input INPUT [--output OUTPUT] [--voice VOICE]
+usage: voice_studio [-h] [--input INPUT] [--output OUTPUT] [--voice VOICE]
                     [--speed SPEED] [--pause PAUSE] [--word-level]
                     [--export-chunks] [--in-time IN] [--out-time OUT]
                     [--engine ENGINE] [--ref-audio FILE] [--ref-text TEXT]
-                    [--list-voices]
+                    [--ui] [--port PORT] [--list-voices]
 
 Options:
-  --input, -i       Input text file or quoted string (required)
+  --input, -i       Input text file or quoted string
   --output, -o      Output directory (default: ~/Videos/VO/)
   --voice, -v       Voice model name (default: default)
   --speed, -s       Speaking speed 0.5-2.0 (default: 1.0)
@@ -123,6 +164,8 @@ Options:
   --engine, -e      TTS engine: coqui, gptsovits, auto (default: auto)
   --ref-audio       Reference audio for GPT-SoVITS voice cloning
   --ref-text        Transcript of reference audio
+  --ui              Launch web UI instead of CLI
+  --port            Port for web UI (default: 7860)
   --list-voices     List available voice models
   --whisper-model   Whisper model size (tiny/base/small/medium/large)
 ```
@@ -155,7 +198,7 @@ python scripts/download_models.py --type whisper --whisper-size base
 
 - [x] **Phase 1**: Core pipeline (CLI) with Coqui TTS
 - [x] **Phase 2**: GPT-SoVITS integration
-- [ ] **Phase 3**: Gradio UI - Generate tab
+- [x] **Phase 3**: Gradio UI - Generate tab
 - [ ] **Phase 4**: Gradio UI - Train tab (recording, import)
 - [ ] **Phase 5**: Gradio UI - Models tab
 - [ ] **Phase 6**: Gradio UI - Settings tab

@@ -1,12 +1,20 @@
 """
 UI modules for Mira Voice Studio.
 
-Phase 3+ implementation:
-- Gradio web interface
-- Generate tab
-- Train tab
-- Models tab
-- Settings tab
+Gradio-based web interface with:
+- Generate tab: Text input, voice selection, generation, preview, export
+- Train tab: Recording, import, dataset management (Phase 4)
+- Models tab: Voice model management (Phase 5)
+- Settings tab: Configuration (Phase 6)
 """
 
-# Placeholder for Phase 3+
+from voice_studio.ui.gradio_app import create_app, launch
+from voice_studio.ui.tab_generate import create_generate_tab
+from voice_studio.ui.styles import get_custom_css
+
+__all__ = [
+    "create_app",
+    "launch",
+    "create_generate_tab",
+    "get_custom_css",
+]

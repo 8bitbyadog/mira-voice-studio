@@ -45,6 +45,10 @@ examples:
 
   # List available voices
   voice_studio --list-voices
+
+  # Launch web UI
+  voice_studio --ui
+  voice_studio --ui --port 8080
         """,
     )
 
@@ -152,6 +156,19 @@ examples:
         help="Transcript of reference audio for GPT-SoVITS",
     )
 
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Launch the web UI instead of CLI mode",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="Port for web UI (default: 7860)",
+    )
+
     return parser
 
 
@@ -204,6 +221,13 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
 
+    # Handle --ui (launch web interface)
+    if args.ui:
+        from voice_studio.ui import launch
+        print("Launching Mira Voice Studio Web UI...")
+        launch(server_port=args.port, debug=False)
+        sys.exit(0)
+
     # Handle --list-voices
     if args.list_voices:
         list_voices()
@@ -211,7 +235,7 @@ def main():
 
     # Validate input
     if not args.input:
-        parser.error("--input/-i is required")
+        parser.error("--input/-i is required (or use --ui for web interface)")
 
     # Import here to avoid slow startup for --help
     from voice_studio.core.tts_coqui import CoquiTTS
