@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from voice_studio.ui.tab_generate import create_generate_tab
+from voice_studio.ui.tab_train import create_train_tab
 from voice_studio.ui.styles import get_custom_css
 from voice_studio.utils.settings import get_settings
 
@@ -51,20 +52,9 @@ def create_app() -> gr.Blocks:
             with gr.Tab("Generate", id="generate", elem_classes=["main-tab"]):
                 generate_components = create_generate_tab()
 
-            # Train Tab (placeholder for Phase 4)
+            # Train Tab
             with gr.Tab("Train", id="train", elem_classes=["main-tab"]):
-                gr.Markdown(
-                    """
-                    ## Train a Custom Voice
-
-                    *Coming in Phase 4*
-
-                    You'll be able to:
-                    - Record your voice directly in the app
-                    - Import existing audio files
-                    - Train custom voice models
-                    """
-                )
+                train_components = create_train_tab()
 
             # Models Tab (placeholder for Phase 5)
             with gr.Tab("Models", id="models", elem_classes=["main-tab"]):
@@ -102,7 +92,7 @@ def create_app() -> gr.Blocks:
         gr.Markdown(
             """
             ---
-            Press **H** for help | **Space** play/pause | **I/O** set in/out points
+            Press **H** for help | **Space** play/pause | **I/O** set in/out points | **R** record
             """,
             elem_classes=["app-footer"]
         )
@@ -149,6 +139,11 @@ def get_keyboard_js() -> str:
                     // Set out point
                     const outBtn = document.querySelector('.out-point-button');
                     if (outBtn) outBtn.click();
+                    break;
+                case 'r':
+                    // Toggle recording
+                    const recordBtn = document.querySelector('.record-button');
+                    if (recordBtn) recordBtn.click();
                     break;
             }
         });

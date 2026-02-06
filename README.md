@@ -194,12 +194,48 @@ python scripts/download_models.py --type gptsovits
 python scripts/download_models.py --type whisper --whisper-size base
 ```
 
+## Training Your Own Voice
+
+The Train tab provides everything you need to create custom voice models:
+
+### Recording in the App
+
+1. Go to **Train** → **Record**
+2. Select your microphone from the dropdown
+3. Click **Generate Script** to get optimized training text
+4. Click **Start Session** to begin
+5. Press **R** or click the button to record each line
+6. Navigate with the arrows to move through the script
+7. Click **Finish Session** when done
+
+**Script Types:**
+- **Mixed**: Combination of all types (recommended)
+- **Phoneme**: Covers all English sounds
+- **Emotional**: Various emotional expressions
+- **Conversational**: YouTube/podcast style
+
+### Importing Audio Files
+
+1. Go to **Train** → **Import**
+2. Drag and drop audio files (WAV, MP3, etc.)
+3. Enable auto-transcription (uses Whisper)
+4. Click **Process Files**
+5. Review the created clips
+
+### Managing Datasets
+
+1. Go to **Train** → **Datasets**
+2. Select a dataset from the dropdown
+3. Review clips and toggle approval (✓/✗)
+4. Configure training options
+5. Click **Start Training** (Phase 7)
+
 ## Development Roadmap
 
 - [x] **Phase 1**: Core pipeline (CLI) with Coqui TTS
 - [x] **Phase 2**: GPT-SoVITS integration
 - [x] **Phase 3**: Gradio UI - Generate tab
-- [ ] **Phase 4**: Gradio UI - Train tab (recording, import)
+- [x] **Phase 4**: Gradio UI - Train tab (recording, import)
 - [ ] **Phase 5**: Gradio UI - Models tab
 - [ ] **Phase 6**: Gradio UI - Settings tab
 - [ ] **Phase 7**: Training backend
