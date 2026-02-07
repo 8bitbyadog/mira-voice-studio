@@ -120,14 +120,84 @@ def delete_clip(voice_name: str, clip_index: int) -> Tuple[str, str, None, str]:
         return f"❌ Error deleting: {e}", get_clip_list_display(voice_name), None, ""
 
 
-def save_trimmed_clip(voice_name: str, clip_index: int, trimmed_audio) -> Tuple[str, str]:
-    """Save the trimmed audio from the editor back to the clip file."""
+def detect_silence_boundaries(voice_name: str, clip_index: int, threshold: float = 0.02) -> Tuple[float, float, float]:
+    """
+    Detect silence at start and end of clip.
+    Returns (suggested_start, suggested_end, total_duration).
+    """
+    clips = get_voice_clips(voice_name)
+    if not clips or clip_index < 1 or clip_index > len(clips):
+        return 0.0, 1.0, 1.0
+
+    clip = clips[clip_index - 1]
+    try:
+        import soundfile as sf
+        audio, sr = sf.read(clip["path"])
+        if len(audio.shape) > 1:
+            audio = np.mean(audio, axis=1)
+
+        duration = len(audio) / sr
+
+        # Find where audio starts (first sample above threshold)
+        window_size = int(sr * 0.05)  # 50ms windows
+        start_sample = 0
+        for i in range(0, len(audio) - window_size, window_size // 2):
+            window_rms = np.sqrt(np.mean(audio[i:i+window_size]**2))
+            if window_rms > threshold:
+                start_sample = max(0, i - window_size)  # Back up slightly
+                break
+
+        # Find where audio ends (last sample above threshold)
+        end_sample = len(audio)
+        for i in range(len(audio) - window_size, window_size, -window_size // 2):
+            window_rms = np.sqrt(np.mean(audio[i:i+window_size]**2))
+            if window_rms > threshold:
+                end_sample = min(len(audio), i + window_size * 2)  # Add buffer
+                break
+
+        start_time = start_sample / sr
+        end_time = end_sample / sr
+
+        return start_time, end_time, duration
+
+    except Exception as e:
+        print(f"Error detecting silence: {e}")
+        return 0.0, 1.0, 1.0
+
+
+def create_trim_preview(voice_name: str, clip_index: int, start_time: float, end_time: float) -> Optional[str]:
+    """Create a temporary trimmed audio file for preview."""
+    clips = get_voice_clips(voice_name)
+    if not clips or clip_index < 1 or clip_index > len(clips):
+        return None
+
+    clip = clips[clip_index - 1]
+    try:
+        import soundfile as sf
+        audio, sr = sf.read(clip["path"])
+        if len(audio.shape) > 1:
+            audio = np.mean(audio, axis=1)
+
+        start_sample = int(start_time * sr)
+        end_sample = int(end_time * sr)
+
+        trimmed = audio[start_sample:end_sample]
+
+        # Save to temp file
+        temp_path = Path(tempfile.gettempdir()) / f"trim_preview_{clip_index}.wav"
+        sf.write(str(temp_path), trimmed.astype(np.float32), sr)
+
+        return str(temp_path)
+    except Exception as e:
+        print(f"Error creating preview: {e}")
+        return None
+
+
+def save_trimmed_clip(voice_name: str, clip_index: int, start_time: float, end_time: float) -> Tuple[str, str]:
+    """Save the trimmed audio using start/end times."""
     clips = get_voice_clips(voice_name)
     if not clips or clip_index < 1 or clip_index > len(clips):
         return "❌ Invalid clip index", get_clip_list_display(voice_name)
-
-    if trimmed_audio is None:
-        return "❌ No audio to save. Load a clip first.", get_clip_list_display(voice_name)
 
     clip = clips[clip_index - 1]
     clip_path = Path(clip["path"])
@@ -135,24 +205,22 @@ def save_trimmed_clip(voice_name: str, clip_index: int, trimmed_audio) -> Tuple[
 
     try:
         import soundfile as sf
-
-        # trimmed_audio is a tuple of (sample_rate, audio_data) from Gradio
-        if isinstance(trimmed_audio, tuple):
-            sr, audio = trimmed_audio
-        else:
-            # It might be a file path
-            audio, sr = sf.read(str(trimmed_audio))
+        audio, sr = sf.read(str(clip_path))
 
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
 
-        new_duration = len(audio) / sr
+        start_sample = int(start_time * sr)
+        end_sample = int(end_time * sr)
+        trimmed = audio[start_sample:end_sample]
+
+        new_duration = len(trimmed) / sr
 
         if new_duration < 0.5:
             return "❌ Trimmed clip too short (min 0.5s)", get_clip_list_display(voice_name)
 
         # Save back to same file
-        sf.write(str(clip_path), audio.astype(np.float32), sr)
+        sf.write(str(clip_path), trimmed.astype(np.float32), sr)
 
         status = f"✅ **SAVED:** {clip['name']}\n\nNew duration: {new_duration:.2f}s (was {original_duration:.2f}s)"
 
@@ -952,7 +1020,7 @@ def create_train_tab() -> Dict[str, Any]:
         # Review Clips Sub-tab
         with gr.Tab("Review Clips", id="review"):
             gr.Markdown("### Review & Clean Voice Clips")
-            gr.Markdown("Preview clips, delete bad ones (silence/noise), and regenerate the combined reference.")
+            gr.Markdown("Preview clips, trim silence, delete bad ones, then regenerate the combined reference.")
 
             with gr.Row():
                 with gr.Column(scale=1):
@@ -967,7 +1035,7 @@ def create_train_tab() -> Dict[str, Any]:
                     clip_list_display = gr.Markdown("Select a voice model to see clips")
 
                 with gr.Column(scale=2):
-                    gr.Markdown("**Preview Clip**")
+                    gr.Markdown("**Clip Preview**")
 
                     with gr.Row():
                         clip_num_input = gr.Number(
@@ -978,17 +1046,11 @@ def create_train_tab() -> Dict[str, Any]:
                         )
                         load_clip_btn = gr.Button("Load Clip")
 
+                    # Read-only audio preview (just for listening)
                     clip_audio_preview = gr.Audio(
-                        label="Clip Preview - Drag edges to trim",
+                        label="Original Clip",
                         type="filepath",
-                        interactive=True,
-                        editable=True,
-                        waveform_options=gr.WaveformOptions(
-                            waveform_color="#3b82f6",
-                            waveform_progress_color="#1d4ed8",
-                            trim_region_color="#ef444450",
-                            show_recording_waveform=True,
-                        )
+                        interactive=False
                     )
 
                     clip_info_display = gr.Markdown("")
@@ -997,24 +1059,53 @@ def create_train_tab() -> Dict[str, Any]:
                         prev_clip_btn = gr.Button("◀ Prev")
                         next_clip_btn = gr.Button("Next ▶")
 
-                    gr.Markdown("*Drag the edges of the waveform to trim, then click Save*")
+                    gr.Markdown("---")
+                    gr.Markdown("**Trim Controls**")
+
+                    # Hidden state for clip duration
+                    clip_duration_state = gr.State(value=5.0)
 
                     with gr.Row():
-                        save_trim_btn = gr.Button("💾 Save Trimmed Clip", variant="primary")
+                        trim_start = gr.Slider(
+                            minimum=0,
+                            maximum=10,
+                            value=0,
+                            step=0.01,
+                            label="Start Time (sec)",
+                            info="Drag to set where audio should start"
+                        )
+                        trim_end = gr.Slider(
+                            minimum=0,
+                            maximum=10,
+                            value=10,
+                            step=0.01,
+                            label="End Time (sec)",
+                            info="Drag to set where audio should end"
+                        )
+
+                    trim_info = gr.Markdown("*Adjust sliders to trim, or click Auto-Trim*")
+
+                    with gr.Row():
+                        auto_trim_btn = gr.Button("Auto-Trim Silence", size="sm")
+                        preview_trim_btn = gr.Button("Preview Trim", size="sm")
+
+                    # Trimmed preview player
+                    trim_preview_audio = gr.Audio(
+                        label="Trimmed Preview",
+                        type="filepath",
+                        interactive=False,
+                        visible=True
+                    )
+
+                    with gr.Row():
+                        save_trim_btn = gr.Button("Save Trim", variant="primary")
+                        delete_clip_btn = gr.Button("Delete Clip", variant="stop")
 
                     trim_status = gr.Markdown("")
 
                     gr.Markdown("---")
 
-                    delete_clip_btn = gr.Button(
-                        "🗑️ Delete This Clip",
-                        variant="stop"
-                    )
-                    delete_status = gr.Markdown("")
-
-                    gr.Markdown("---")
-
-                    gr.Markdown("*After deleting clips, click below to update the combined reference:*")
+                    gr.Markdown("*After editing clips, regenerate the combined reference:*")
                     regenerate_btn = gr.Button(
                         "Regenerate Combined Reference",
                         variant="primary"
@@ -1038,43 +1129,117 @@ def create_train_tab() -> Dict[str, Any]:
                 outputs=[clip_list_display]
             )
 
-            def nav_clip(voice_name, current_idx, direction):
+            def load_clip_with_sliders(voice_name, clip_idx):
+                """Load clip and set up trim sliders based on duration."""
+                audio_path, info = load_clip_for_preview(voice_name, int(clip_idx))
+                clips = get_voice_clips(voice_name)
+                if clips and 0 < clip_idx <= len(clips):
+                    duration = clips[int(clip_idx) - 1]["duration"]
+                    return (
+                        audio_path,
+                        info,
+                        gr.update(maximum=duration, value=0),
+                        gr.update(maximum=duration, value=duration),
+                        duration,
+                        None,
+                        ""
+                    )
+                return audio_path, info, gr.update(), gr.update(), 5.0, None, ""
+
+            load_clip_btn.click(
+                fn=load_clip_with_sliders,
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[clip_audio_preview, clip_info_display, trim_start, trim_end, clip_duration_state, trim_preview_audio, trim_status]
+            )
+
+            def nav_clip_with_sliders(voice_name, current_idx, direction):
                 clips = get_voice_clips(voice_name)
                 if direction == "prev":
-                    new_idx = max(1, current_idx - 1)
+                    new_idx = max(1, int(current_idx) - 1)
                 else:
-                    new_idx = min(len(clips), current_idx + 1)
+                    new_idx = min(len(clips), int(current_idx) + 1)
                 audio_path, info = load_clip_for_preview(voice_name, new_idx)
-                return new_idx, audio_path, info
+                if clips and 0 < new_idx <= len(clips):
+                    duration = clips[new_idx - 1]["duration"]
+                    return (
+                        new_idx,
+                        audio_path,
+                        info,
+                        gr.update(maximum=duration, value=0),
+                        gr.update(maximum=duration, value=duration),
+                        duration,
+                        None,
+                        ""
+                    )
+                return new_idx, audio_path, info, gr.update(), gr.update(), 5.0, None, ""
 
             prev_clip_btn.click(
-                fn=lambda v, i: nav_clip(v, i, "prev"),
+                fn=lambda v, i: nav_clip_with_sliders(v, i, "prev"),
                 inputs=[review_voice_dropdown, clip_num_input],
-                outputs=[clip_num_input, clip_audio_preview, clip_info_display]
+                outputs=[clip_num_input, clip_audio_preview, clip_info_display, trim_start, trim_end, clip_duration_state, trim_preview_audio, trim_status]
             )
 
             next_clip_btn.click(
-                fn=lambda v, i: nav_clip(v, i, "next"),
+                fn=lambda v, i: nav_clip_with_sliders(v, i, "next"),
                 inputs=[review_voice_dropdown, clip_num_input],
-                outputs=[clip_num_input, clip_audio_preview, clip_info_display]
+                outputs=[clip_num_input, clip_audio_preview, clip_info_display, trim_start, trim_end, clip_duration_state, trim_preview_audio, trim_status]
+            )
+
+            def do_auto_trim(voice_name, clip_idx):
+                """Auto-detect silence and set trim points."""
+                start, end, duration = detect_silence_boundaries(voice_name, int(clip_idx))
+                trimmed_duration = end - start
+                info = f"Auto-detected: **{start:.2f}s** to **{end:.2f}s** (trimmed duration: {trimmed_duration:.2f}s)"
+                return gr.update(value=start), gr.update(value=end), info
+
+            auto_trim_btn.click(
+                fn=do_auto_trim,
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[trim_start, trim_end, trim_info]
+            )
+
+            def do_preview_trim(voice_name, clip_idx, start_time, end_time):
+                """Create and return trimmed preview."""
+                preview_path = create_trim_preview(voice_name, int(clip_idx), start_time, end_time)
+                trimmed_duration = end_time - start_time
+                info = f"Preview: **{start_time:.2f}s** to **{end_time:.2f}s** ({trimmed_duration:.2f}s)"
+                return preview_path, info
+
+            preview_trim_btn.click(
+                fn=do_preview_trim,
+                inputs=[review_voice_dropdown, clip_num_input, trim_start, trim_end],
+                outputs=[trim_preview_audio, trim_info]
+            )
+
+            def do_save_trim(voice_name, clip_idx, start_time, end_time):
+                """Save the trim and reload the clip."""
+                status, clip_list = save_trimmed_clip(voice_name, int(clip_idx), start_time, end_time)
+                # Reload the clip to show updated audio
+                audio_path, info = load_clip_for_preview(voice_name, int(clip_idx))
+                clips = get_voice_clips(voice_name)
+                if clips and 0 < clip_idx <= len(clips):
+                    duration = clips[int(clip_idx) - 1]["duration"]
+                    return (
+                        status,
+                        clip_list,
+                        audio_path,
+                        info,
+                        gr.update(maximum=duration, value=0),
+                        gr.update(maximum=duration, value=duration),
+                        None
+                    )
+                return status, clip_list, audio_path, info, gr.update(), gr.update(), None
+
+            save_trim_btn.click(
+                fn=do_save_trim,
+                inputs=[review_voice_dropdown, clip_num_input, trim_start, trim_end],
+                outputs=[trim_status, clip_list_display, clip_audio_preview, clip_info_display, trim_start, trim_end, trim_preview_audio]
             )
 
             delete_clip_btn.click(
                 fn=delete_clip,
                 inputs=[review_voice_dropdown, clip_num_input],
-                outputs=[delete_status, clip_list_display, clip_audio_preview, clip_info_display]
-            )
-
-            save_trim_btn.click(
-                fn=save_trimmed_clip,
-                inputs=[review_voice_dropdown, clip_num_input, clip_audio_preview],
-                outputs=[trim_status, clip_list_display]
-            )
-
-            load_clip_btn.click(
-                fn=load_clip_for_preview,
-                inputs=[review_voice_dropdown, clip_num_input],
-                outputs=[clip_audio_preview, clip_info_display]
+                outputs=[trim_status, clip_list_display, clip_audio_preview, clip_info_display]
             )
 
             regenerate_btn.click(
