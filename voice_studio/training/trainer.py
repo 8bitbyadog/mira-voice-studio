@@ -202,6 +202,7 @@ class VoiceTrainer:
         if dataset is None:
             raise ValueError(f"Dataset not found: {config.dataset_name}")
 
+        self._dataset = dataset  # Store for later use
         approved_clips = dataset.get_approved_clips()
         if len(approved_clips) < 5:
             raise ValueError(f"Not enough approved clips. Need at least 5, have {len(approved_clips)}")
@@ -212,23 +213,40 @@ class VoiceTrainer:
         if callback:
             callback(progress)
 
-        # Export for training
-        self._temp_dir = Path(tempfile.mkdtemp(prefix="mira_training_"))
-        export_dir = self.dataset_manager.export_for_training(
-            config.dataset_name,
-            self._temp_dir,
-            format="gptsovits"
-        )
-        self._export_dir = export_dir
+        # Use persistent export directory within the dataset folder (not temp)
+        self._export_dir = dataset.path / "training_export"
+        self._export_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if we need to re-export (clips changed)
+        filelist_path = self._export_dir / "filelist.txt"
+        needs_export = True
+        if filelist_path.exists():
+            existing_lines = filelist_path.read_text().strip().split("\n")
+            if len(existing_lines) == len(approved_clips):
+                needs_export = False
+                progress.message = "Using cached export data"
+
+        if needs_export:
+            export_dir = self.dataset_manager.export_for_training(
+                config.dataset_name,
+                self._export_dir.parent,
+                format="gptsovits"
+            )
+            # Move to our expected location if different
+            if export_dir != self._export_dir:
+                import shutil
+                if self._export_dir.exists():
+                    shutil.rmtree(self._export_dir)
+                shutil.move(str(export_dir), str(self._export_dir))
 
         progress.current_step = 2
-        progress.message = "Dataset exported for training"
+        progress.message = "Dataset prepared for training"
         yield progress
         if callback:
             callback(progress)
 
         # Validate export
-        filelist_path = export_dir / "filelist.txt"
+        filelist_path = self._export_dir / "filelist.txt"
         if not filelist_path.exists():
             raise ValueError("Export failed: filelist.txt not created")
 
@@ -237,7 +255,7 @@ class VoiceTrainer:
         for line in lines:
             if "|" in line:
                 filename, transcript = line.split("|", 1)
-                audio_path = export_dir / "wavs" / filename
+                audio_path = self._export_dir / "wavs" / filename
                 if audio_path.exists():
                     self._training_items.append({
                         "audio_path": audio_path,
@@ -255,14 +273,42 @@ class VoiceTrainer:
         config: TrainingConfig,
         callback: Optional[Callable]
     ) -> Generator[TrainingProgress, None, None]:
-        """Stage 2: Extract semantic features from audio."""
+        """Stage 2: Extract semantic features from audio (with caching)."""
         total_items = len(self._training_items)
 
+        # Check for cached features
+        cache_path = self._dataset.path / "features_cache.npz"
+        cache_meta_path = self._dataset.path / "features_cache_meta.json"
+
+        cached_features = self._load_cached_features(cache_path, cache_meta_path, config.semantic_model)
+
+        if cached_features is not None and len(cached_features) == total_items:
+            # Use cached features - skip the expensive extraction!
+            progress = TrainingProgress(
+                stage="features",
+                current_step=total_items,
+                total_steps=total_items,
+                message=f"Loaded {total_items} cached features (skipping extraction)"
+            )
+            yield progress
+            if callback:
+                callback(progress)
+
+            self._features = []
+            for i, item in enumerate(self._training_items):
+                self._features.append({
+                    "audio_features": cached_features[i],
+                    "transcript": item["transcript"],
+                    "audio_path": item["audio_path"]
+                })
+            return
+
+        # No cache or cache invalid - extract features
         progress = TrainingProgress(
             stage="features",
             current_step=0,
             total_steps=total_items,
-            message="Extracting audio features..."
+            message="Extracting audio features (this will be cached for next time)..."
         )
         yield progress
         if callback:
@@ -272,12 +318,14 @@ class VoiceTrainer:
         self._load_feature_extractor(config.semantic_model)
 
         self._features = []
+        all_features = []
         for i, item in enumerate(self._training_items):
             if self._stop_requested:
                 return
 
             # Extract features
             features = self._extract_features(item["audio_path"])
+            all_features.append(features)
             self._features.append({
                 "audio_features": features,
                 "transcript": item["transcript"],
@@ -289,6 +337,74 @@ class VoiceTrainer:
             yield progress
             if callback:
                 callback(progress)
+
+        # Save features to cache for next time
+        self._save_features_cache(all_features, cache_path, cache_meta_path, config.semantic_model)
+        progress.message = f"Extracted and cached {total_items} features"
+        yield progress
+        if callback:
+            callback(progress)
+
+    def _load_cached_features(
+        self,
+        cache_path: Path,
+        meta_path: Path,
+        model_size: str
+    ) -> Optional[List[np.ndarray]]:
+        """Load cached features if they exist and are valid."""
+        if not cache_path.exists() or not meta_path.exists():
+            return None
+
+        try:
+            # Check metadata matches current config
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+
+            if meta.get("model_size") != model_size:
+                print(f"Feature cache model mismatch: {meta.get('model_size')} vs {model_size}")
+                return None
+
+            if meta.get("num_items") != len(self._training_items):
+                print(f"Feature cache count mismatch: {meta.get('num_items')} vs {len(self._training_items)}")
+                return None
+
+            # Load the cached features
+            data = np.load(cache_path)
+            features = [data[f"features_{i}"] for i in range(meta["num_items"])]
+            print(f"Loaded {len(features)} cached features from {cache_path}")
+            return features
+
+        except Exception as e:
+            print(f"Error loading feature cache: {e}")
+            return None
+
+    def _save_features_cache(
+        self,
+        features: List[np.ndarray],
+        cache_path: Path,
+        meta_path: Path,
+        model_size: str
+    ) -> None:
+        """Save extracted features to cache."""
+        try:
+            # Save features as compressed numpy archive
+            feature_dict = {f"features_{i}": f for i, f in enumerate(features)}
+            np.savez_compressed(cache_path, **feature_dict)
+
+            # Save metadata
+            meta = {
+                "model_size": model_size,
+                "num_items": len(features),
+                "created_at": datetime.now().isoformat(),
+                "feature_shape": list(features[0].shape) if features else [],
+            }
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+
+            print(f"Saved feature cache to {cache_path} ({len(features)} items)")
+
+        except Exception as e:
+            print(f"Error saving feature cache: {e}")
 
     def _stage_train_model(
         self,
@@ -505,9 +621,8 @@ class VoiceTrainer:
         # Update result
         result.model_path = model_dir
 
-        # Cleanup temp directory
-        if hasattr(self, '_temp_dir') and self._temp_dir.exists():
-            shutil.rmtree(self._temp_dir, ignore_errors=True)
+        # Note: Training data and features are now cached in the dataset folder
+        # for reuse in future training runs
 
     def _load_feature_extractor(self, model_size: str):
         """Load the feature extraction model (using Whisper encoder)."""
@@ -642,14 +757,81 @@ class VoiceTrainer:
         if approved_duration < recommended_duration:
             warnings.append(f"Recommend at least {recommended_duration}s for best results (have {approved_duration:.1f}s)")
 
+        # Check for cached features
+        cache_info = self.get_cache_info(dataset_name)
+
         return {
             "valid": len(issues) == 0,
             "clip_count": len(approved_clips),
             "duration_seconds": approved_duration,
             "issues": issues,
             "warnings": warnings,
-            "quality_estimate": self._estimate_quality(approved_duration, len(approved_clips))
+            "quality_estimate": self._estimate_quality(approved_duration, len(approved_clips)),
+            "has_cached_features": cache_info["has_cache"],
+            "cache_info": cache_info,
         }
+
+    def get_cache_info(self, dataset_name: str) -> Dict[str, Any]:
+        """
+        Check if cached training data exists for a dataset.
+
+        Returns:
+            Dictionary with cache status and info.
+        """
+        dataset = self.dataset_manager.load_dataset(dataset_name)
+        if dataset is None:
+            return {"has_cache": False, "error": "Dataset not found"}
+
+        cache_path = dataset.path / "features_cache.npz"
+        meta_path = dataset.path / "features_cache_meta.json"
+        export_dir = dataset.path / "training_export"
+
+        result = {
+            "has_cache": False,
+            "has_export": export_dir.exists(),
+            "cache_path": str(cache_path) if cache_path.exists() else None,
+            "export_path": str(export_dir) if export_dir.exists() else None,
+            "cached_items": 0,
+            "model_size": None,
+            "created_at": None,
+        }
+
+        if cache_path.exists() and meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                result["has_cache"] = True
+                result["cached_items"] = meta.get("num_items", 0)
+                result["model_size"] = meta.get("model_size")
+                result["created_at"] = meta.get("created_at")
+            except Exception:
+                pass
+
+        return result
+
+    def clear_cache(self, dataset_name: str) -> bool:
+        """
+        Clear cached features for a dataset (forces re-extraction on next train).
+
+        Returns:
+            True if cache was cleared.
+        """
+        dataset = self.dataset_manager.load_dataset(dataset_name)
+        if dataset is None:
+            return False
+
+        cache_path = dataset.path / "features_cache.npz"
+        meta_path = dataset.path / "features_cache_meta.json"
+
+        cleared = False
+        if cache_path.exists():
+            cache_path.unlink()
+            cleared = True
+        if meta_path.exists():
+            meta_path.unlink()
+            cleared = True
+
+        return cleared
 
     def _estimate_quality(self, duration: float, clip_count: int) -> str:
         """Estimate expected training quality based on data."""

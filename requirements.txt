@@ -6,7 +6,9 @@ torch>=2.0.0
 torchaudio>=2.0.0
 
 # === TTS Engines ===
-TTS>=0.22.0                     # Coqui TTS for Phase 1
+# TTS>=0.22.0                   # Coqui TTS - requires Python <3.12
+# Install manually if using Python 3.9-3.11:
+#   pip install TTS
 
 # === Speech Processing ===
 openai-whisper>=20231117

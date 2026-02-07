@@ -30,6 +30,197 @@ from voice_studio.utils.settings import get_settings
 from voice_studio.utils.audio_utils import format_duration
 
 
+# Global state for clip review
+_current_clip_index: int = 0
+_clip_list: List[Path] = []
+
+
+def get_voice_clips(voice_name: str) -> List[Dict]:
+    """Get list of clips for a voice model with metadata."""
+    if not voice_name:
+        return []
+
+    voice_dir = Path.home() / "mira_voice_studio" / "models" / "custom" / voice_name / "references"
+    if not voice_dir.exists():
+        return []
+
+    clips = []
+    for clip_path in sorted(voice_dir.glob("*.wav")):
+        try:
+            import soundfile as sf
+            info = sf.info(str(clip_path))
+            duration = info.duration
+
+            # Check if clip has actual audio (not silence)
+            audio, sr = sf.read(str(clip_path))
+            if len(audio.shape) > 1:
+                audio = np.mean(audio, axis=1)
+            rms = np.sqrt(np.mean(audio**2))
+            is_silent = rms < 0.01  # Very quiet = likely silent
+
+            clips.append({
+                "path": str(clip_path),
+                "name": clip_path.name,
+                "duration": duration,
+                "is_silent": is_silent,
+                "rms": rms
+            })
+        except Exception as e:
+            print(f"Error reading {clip_path}: {e}")
+
+    return clips
+
+
+def get_clip_list_display(voice_name: str) -> str:
+    """Get formatted list of clips for display."""
+    clips = get_voice_clips(voice_name)
+    if not clips:
+        return "No clips found"
+
+    lines = []
+    for i, clip in enumerate(clips):
+        status = "⚠️ SILENT" if clip["is_silent"] else "✓"
+        lines.append(f"{i+1}. {clip['name']} - {clip['duration']:.1f}s {status}")
+
+    silent_count = sum(1 for c in clips if c["is_silent"])
+    header = f"**{len(clips)} clips** ({silent_count} potentially silent)\n\n"
+
+    return header + "\n".join(lines)
+
+
+def load_clip_for_preview(voice_name: str, clip_index: int) -> Tuple[Optional[str], str]:
+    """Load a specific clip for preview."""
+    clips = get_voice_clips(voice_name)
+    if not clips or clip_index < 1 or clip_index > len(clips):
+        return None, "Invalid clip index"
+
+    clip = clips[clip_index - 1]
+    status = f"**{clip['name']}**\nDuration: {clip['duration']:.2f}s\nLevel: {clip['rms']:.4f}"
+    if clip["is_silent"]:
+        status += "\n⚠️ **This clip appears to be silent!**"
+
+    return clip["path"], status
+
+
+def delete_clip(voice_name: str, clip_index: int) -> Tuple[str, str, None, str]:
+    """Delete a clip from the voice model."""
+    clips = get_voice_clips(voice_name)
+    if not clips or clip_index < 1 or clip_index > len(clips):
+        return "❌ Invalid clip index", get_clip_list_display(voice_name), None, ""
+
+    clip = clips[clip_index - 1]
+    clip_path = Path(clip["path"])
+
+    try:
+        clip_path.unlink()
+        remaining = len(clips) - 1
+        status = f"✅ **DELETED:** {clip['name']}\n\n*{remaining} clips remaining*"
+        return status, get_clip_list_display(voice_name), None, ""
+    except Exception as e:
+        return f"❌ Error deleting: {e}", get_clip_list_display(voice_name), None, ""
+
+
+def save_trimmed_clip(voice_name: str, clip_index: int, trimmed_audio) -> Tuple[str, str]:
+    """Save the trimmed audio from the editor back to the clip file."""
+    clips = get_voice_clips(voice_name)
+    if not clips or clip_index < 1 or clip_index > len(clips):
+        return "❌ Invalid clip index", get_clip_list_display(voice_name)
+
+    if trimmed_audio is None:
+        return "❌ No audio to save. Load a clip first.", get_clip_list_display(voice_name)
+
+    clip = clips[clip_index - 1]
+    clip_path = Path(clip["path"])
+    original_duration = clip["duration"]
+
+    try:
+        import soundfile as sf
+
+        # trimmed_audio is a tuple of (sample_rate, audio_data) from Gradio
+        if isinstance(trimmed_audio, tuple):
+            sr, audio = trimmed_audio
+        else:
+            # It might be a file path
+            audio, sr = sf.read(str(trimmed_audio))
+
+        if len(audio.shape) > 1:
+            audio = np.mean(audio, axis=1)
+
+        new_duration = len(audio) / sr
+
+        if new_duration < 0.5:
+            return "❌ Trimmed clip too short (min 0.5s)", get_clip_list_display(voice_name)
+
+        # Save back to same file
+        sf.write(str(clip_path), audio.astype(np.float32), sr)
+
+        status = f"✅ **SAVED:** {clip['name']}\n\nNew duration: {new_duration:.2f}s (was {original_duration:.2f}s)"
+
+        return status, get_clip_list_display(voice_name)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"❌ Error saving: {e}", get_clip_list_display(voice_name)
+
+
+def regenerate_combined_reference(voice_name: str) -> str:
+    """Regenerate the combined reference after editing clips."""
+    if not voice_name:
+        return "Select a voice first"
+
+    voice_dir = Path.home() / "mira_voice_studio" / "models" / "custom" / voice_name
+    refs_dir = voice_dir / "references"
+
+    if not refs_dir.exists():
+        return "No references folder found"
+
+    try:
+        import soundfile as sf
+
+        all_refs = sorted(refs_dir.glob("*.wav"))
+        if not all_refs:
+            return "No reference clips found"
+
+        combined_audio = []
+        sr = 44100
+        pause = np.zeros(int(sr * 0.3), dtype=np.float32)
+
+        for ref_path in all_refs:
+            audio, ref_sr = sf.read(str(ref_path))
+            if len(audio.shape) > 1:
+                audio = np.mean(audio, axis=1)
+            if ref_sr != sr:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=ref_sr, target_sr=sr)
+            combined_audio.append(audio.astype(np.float32))
+            combined_audio.append(pause)
+
+        combined = np.concatenate(combined_audio)
+        combined_path = voice_dir / "reference_combined.wav"
+        sf.write(str(combined_path), combined, sr)
+
+        # Update metadata
+        import json
+        metadata_path = voice_dir / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"name": voice_name}
+
+        metadata["reference_count"] = len(all_refs)
+        metadata["total_reference_duration"] = len(combined) / sr
+
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        return f"Regenerated combined reference\n{len(all_refs)} clips, {len(combined)/sr:.1f}s total"
+
+    except Exception as e:
+        return f"Error: {e}"
+
+
 # Global recorder instance
 _recorder: Optional[Recorder] = None
 _script_lines: List = []
@@ -131,14 +322,22 @@ def toggle_recording() -> Tuple[str, str, Optional[str]]:
             sf.write(str(temp_path), take.audio_data, take.sample_rate)
 
             session = recorder.get_session()
-            session_info = f"Takes: {session.take_count} | Total: {format_duration(session.total_duration)}"
+            if session:
+                session_info = f"Takes: {session.take_count} | Total: {format_duration(session.total_duration)}"
+            else:
+                session_info = "Take recorded"
 
             return "Start Recording (R)", session_info, str(temp_path)
 
         return "Start Recording (R)", "Recording stopped", None
 
     else:
-        # Start recording
+        # Start recording - ensure session exists first
+        session = recorder.get_session()
+        if session is None:
+            # Auto-start a session if none exists
+            recorder.start_session("recording")
+
         if recorder.start_recording():
             return "Stop Recording (R)", "Recording...", None
         else:
@@ -316,6 +515,27 @@ Issues:
         warnings_text = "\n".join([f"- {w}" for w in reqs["warnings"]])
         warnings_text = f"\n\n**Warnings:**\n{warnings_text}"
 
+    # Show cache status
+    cache_text = ""
+    if reqs.get("has_cached_features"):
+        cache_info = reqs.get("cache_info", {})
+        cache_text = f"""
+
+**Cached Features Available**
+- {cache_info.get('cached_items', 0)} cached audio features
+- Model: {cache_info.get('model_size', 'unknown')}
+- Created: {cache_info.get('created_at', 'unknown')[:10] if cache_info.get('created_at') else 'unknown'}
+
+*Feature extraction will be skipped - training will start faster!*
+"""
+    else:
+        cache_text = """
+
+**No Cached Features**
+- First training run will extract features (slower)
+- Features will be cached for future training runs
+"""
+
     return f"""
 **Ready to train**
 
@@ -323,7 +543,20 @@ Issues:
 - Duration: {format_duration(reqs["duration_seconds"])}
 - Expected quality: {reqs["quality_estimate"]}
 {warnings_text}
+{cache_text}
 """
+
+
+def clear_feature_cache(dataset_name: str) -> str:
+    """Clear cached features for a dataset."""
+    if not dataset_name:
+        return "Select a dataset first"
+
+    trainer = VoiceTrainer()
+    if trainer.clear_cache(dataset_name):
+        return "Feature cache cleared. Next training will re-extract features."
+    else:
+        return "No cache to clear or dataset not found."
 
 
 # Global trainer instance for stopping
@@ -442,6 +675,98 @@ def stop_training() -> str:
     return "No training in progress"
 
 
+def get_existing_voices() -> List[str]:
+    """Get list of existing custom voice models."""
+    try:
+        from voice_studio.models.manager import ModelManager
+        manager = ModelManager()
+        models = manager.list_models("custom")
+        return [m.name for m in models if m.has_reference_audio]
+    except Exception:
+        return []
+
+
+def add_recordings_to_voice(voice_name: str) -> str:
+    """Add current session recordings to an existing voice model."""
+    recorder = get_recorder()
+    session = recorder.get_session()
+
+    if session is None or not session.takes:
+        return "No recordings to add. Record some samples first."
+
+    if not voice_name:
+        return "Select a voice model first."
+
+    # Get voice model references folder
+    from pathlib import Path
+    voice_dir = Path.home() / "mira_voice_studio" / "models" / "custom" / voice_name
+    refs_dir = voice_dir / "references"
+
+    if not voice_dir.exists():
+        return f"Voice model not found: {voice_name}"
+
+    refs_dir.mkdir(exist_ok=True)
+
+    # Find the next index
+    existing = list(refs_dir.glob("*.wav"))
+    next_idx = len(existing) + 1
+
+    # Save each take to the references folder
+    import soundfile as sf
+    added_count = 0
+    for take in session.takes:
+        ref_path = refs_dir / f"ref_{next_idx:03d}.wav"
+        sf.write(str(ref_path), take.audio_data, take.sample_rate)
+        next_idx += 1
+        added_count += 1
+
+    # Regenerate combined reference
+    try:
+        all_refs = sorted(refs_dir.glob("*.wav"))
+        if all_refs:
+            import numpy as np
+            combined_audio = []
+            sr = 44100
+            pause = np.zeros(int(sr * 0.3), dtype=np.float32)
+
+            for ref_path in all_refs:
+                audio, ref_sr = sf.read(str(ref_path))
+                if len(audio.shape) > 1:
+                    audio = np.mean(audio, axis=1)
+                if ref_sr != sr:
+                    import librosa
+                    audio = librosa.resample(audio, orig_sr=ref_sr, target_sr=sr)
+                combined_audio.append(audio.astype(np.float32))
+                combined_audio.append(pause)
+
+            combined = np.concatenate(combined_audio)
+            combined_path = voice_dir / "reference_combined.wav"
+            sf.write(str(combined_path), combined, sr)
+
+            # Update metadata
+            import json
+            metadata_path = voice_dir / "metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {"name": voice_name}
+
+            metadata["reference_count"] = len(all_refs)
+            metadata["total_reference_duration"] = len(combined) / sr
+
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+    except Exception as e:
+        print(f"Warning: Could not regenerate combined reference: {e}")
+
+    # Clear session
+    recorder.stop_monitoring()
+
+    return f"Added {added_count} recordings to '{voice_name}' voice model!\nTotal references: {next_idx - 1}\n\nYou can now test the improved voice in the Generate tab."
+
+
 def create_train_tab() -> Dict[str, Any]:
     """
     Create the Train tab UI with sub-tabs.
@@ -455,7 +780,7 @@ def create_train_tab() -> Dict[str, Any]:
         # Record Sub-tab
         with gr.Tab("Record", id="record"):
             gr.Markdown("### Record Your Voice")
-            gr.Markdown("Read the script aloud to create training data.")
+            gr.Markdown("Read the script aloud to add more training samples.")
 
             with gr.Row():
                 with gr.Column(scale=2):
@@ -528,7 +853,24 @@ def create_train_tab() -> Dict[str, Any]:
                     # Session info
                     takes_display = gr.Markdown("Takes: 0 | Total: 0:00")
 
-                    finish_btn = gr.Button("Finish Session")
+                    gr.Markdown("---")
+                    gr.Markdown("**Add to Existing Voice**")
+
+                    existing_voice_dropdown = gr.Dropdown(
+                        choices=get_existing_voices(),
+                        label="Select Voice Model",
+                        info="Add recordings to improve this voice"
+                    )
+
+                    add_to_voice_btn = gr.Button(
+                        "Add Recordings to Voice",
+                        variant="primary"
+                    )
+
+                    add_status = gr.Markdown("")
+
+                    gr.Markdown("---")
+                    finish_btn = gr.Button("Finish Session (New Dataset)")
                     finish_status = gr.Markdown("")
 
             # Wire up recording controls
@@ -557,6 +899,12 @@ def create_train_tab() -> Dict[str, Any]:
             record_btn.click(
                 fn=toggle_recording,
                 outputs=[record_btn, takes_display, last_take_audio]
+            )
+
+            add_to_voice_btn.click(
+                fn=add_recordings_to_voice,
+                inputs=[existing_voice_dropdown],
+                outputs=[add_status]
             )
 
             finish_btn.click(
@@ -599,6 +947,140 @@ def create_train_tab() -> Dict[str, Any]:
                 fn=process_uploaded_files,
                 inputs=[file_upload, transcribe_checkbox],
                 outputs=[process_status, clips_preview]
+            )
+
+        # Review Clips Sub-tab
+        with gr.Tab("Review Clips", id="review"):
+            gr.Markdown("### Review & Clean Voice Clips")
+            gr.Markdown("Preview clips, delete bad ones (silence/noise), and regenerate the combined reference.")
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    review_voice_dropdown = gr.Dropdown(
+                        choices=get_existing_voices(),
+                        label="Select Voice Model",
+                        info="Choose a voice to review its clips"
+                    )
+
+                    refresh_clips_btn = gr.Button("Refresh List", size="sm")
+
+                    clip_list_display = gr.Markdown("Select a voice model to see clips")
+
+                with gr.Column(scale=2):
+                    gr.Markdown("**Preview Clip**")
+
+                    with gr.Row():
+                        clip_num_input = gr.Number(
+                            label="Clip #",
+                            value=1,
+                            precision=0,
+                            minimum=1
+                        )
+                        load_clip_btn = gr.Button("Load Clip")
+
+                    clip_audio_preview = gr.Audio(
+                        label="Clip Preview - Drag edges to trim",
+                        type="filepath",
+                        interactive=True,
+                        editable=True,
+                        waveform_options=gr.WaveformOptions(
+                            waveform_color="#3b82f6",
+                            waveform_progress_color="#1d4ed8",
+                            trim_region_color="#ef444450",
+                            show_recording_waveform=True,
+                        )
+                    )
+
+                    clip_info_display = gr.Markdown("")
+
+                    with gr.Row():
+                        prev_clip_btn = gr.Button("◀ Prev")
+                        next_clip_btn = gr.Button("Next ▶")
+
+                    gr.Markdown("*Drag the edges of the waveform to trim, then click Save*")
+
+                    with gr.Row():
+                        save_trim_btn = gr.Button("💾 Save Trimmed Clip", variant="primary")
+
+                    trim_status = gr.Markdown("")
+
+                    gr.Markdown("---")
+
+                    delete_clip_btn = gr.Button(
+                        "🗑️ Delete This Clip",
+                        variant="stop"
+                    )
+                    delete_status = gr.Markdown("")
+
+                    gr.Markdown("---")
+
+                    gr.Markdown("*After deleting clips, click below to update the combined reference:*")
+                    regenerate_btn = gr.Button(
+                        "Regenerate Combined Reference",
+                        variant="primary"
+                    )
+
+                    regenerate_status = gr.Markdown("")
+
+            # Wire up review controls
+            def refresh_clip_list(voice_name):
+                return get_clip_list_display(voice_name)
+
+            review_voice_dropdown.change(
+                fn=refresh_clip_list,
+                inputs=[review_voice_dropdown],
+                outputs=[clip_list_display]
+            )
+
+            refresh_clips_btn.click(
+                fn=refresh_clip_list,
+                inputs=[review_voice_dropdown],
+                outputs=[clip_list_display]
+            )
+
+            def nav_clip(voice_name, current_idx, direction):
+                clips = get_voice_clips(voice_name)
+                if direction == "prev":
+                    new_idx = max(1, current_idx - 1)
+                else:
+                    new_idx = min(len(clips), current_idx + 1)
+                audio_path, info = load_clip_for_preview(voice_name, new_idx)
+                return new_idx, audio_path, info
+
+            prev_clip_btn.click(
+                fn=lambda v, i: nav_clip(v, i, "prev"),
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[clip_num_input, clip_audio_preview, clip_info_display]
+            )
+
+            next_clip_btn.click(
+                fn=lambda v, i: nav_clip(v, i, "next"),
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[clip_num_input, clip_audio_preview, clip_info_display]
+            )
+
+            delete_clip_btn.click(
+                fn=delete_clip,
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[delete_status, clip_list_display, clip_audio_preview, clip_info_display]
+            )
+
+            save_trim_btn.click(
+                fn=save_trimmed_clip,
+                inputs=[review_voice_dropdown, clip_num_input, clip_audio_preview],
+                outputs=[trim_status, clip_list_display]
+            )
+
+            load_clip_btn.click(
+                fn=load_clip_for_preview,
+                inputs=[review_voice_dropdown, clip_num_input],
+                outputs=[clip_audio_preview, clip_info_display]
+            )
+
+            regenerate_btn.click(
+                fn=regenerate_combined_reference,
+                inputs=[review_voice_dropdown],
+                outputs=[regenerate_status]
             )
 
         # Datasets Sub-tab
@@ -655,7 +1137,10 @@ def create_train_tab() -> Dict[str, Any]:
                         label="Training Quality"
                     )
 
-                    check_btn = gr.Button("Check Requirements")
+                    with gr.Row():
+                        check_btn = gr.Button("Check Requirements")
+                        clear_cache_btn = gr.Button("Clear Cache", size="sm")
+
                     requirements_status = gr.Markdown("")
 
                     with gr.Row():
@@ -710,6 +1195,17 @@ def create_train_tab() -> Dict[str, Any]:
 
             # Check requirements button
             check_btn.click(
+                fn=check_training_requirements,
+                inputs=[dataset_dropdown],
+                outputs=[requirements_status]
+            )
+
+            # Clear cache button
+            clear_cache_btn.click(
+                fn=clear_feature_cache,
+                inputs=[dataset_dropdown],
+                outputs=[requirements_status]
+            ).then(
                 fn=check_training_requirements,
                 inputs=[dataset_dropdown],
                 outputs=[requirements_status]

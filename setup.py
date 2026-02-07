@@ -27,7 +27,6 @@ setup(
     install_requires=[
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
-        "TTS>=0.22.0",
         "openai-whisper>=20231117",
         "pydub>=0.25.1",
         "soundfile>=0.12.1",
@@ -39,6 +38,7 @@ setup(
     ],
     extras_require={
         "dev": ["pytest", "black", "flake8"],
+        "coqui": ["TTS>=0.22.0"],  # Requires Python <3.12
     },
     entry_points={
         "console_scripts": [

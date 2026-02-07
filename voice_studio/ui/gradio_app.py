@@ -1,5 +1,5 @@
 """
-Mira Voice Studio - Gradio Web Interface
+Auto Voice - Gradio Web Interface
 
 Main application entry point for the web UI.
 """
@@ -29,7 +29,7 @@ def create_app() -> gr.Blocks:
     custom_css = get_custom_css()
 
     with gr.Blocks(
-        title="Mira Voice Studio",
+        title="Auto Voice",
         css=custom_css,
         theme=gr.themes.Soft(
             primary_hue="blue",
@@ -39,7 +39,7 @@ def create_app() -> gr.Blocks:
         # Header
         gr.Markdown(
             """
-            # Mira Voice Studio
+            # Auto Voice
             Generate voiceovers with synced captions
             """,
             elem_classes=["app-header"]
@@ -144,6 +144,21 @@ def launch(
         server_name: Server hostname.
         debug: Enable debug mode.
     """
+    from pathlib import Path
+
+    # Allow serving files from common output directories
+    home = Path.home()
+    allowed_paths = [
+        str(home / "Videos"),
+        str(home / "Movies"),
+        str(home / "Desktop"),
+        str(home / "Documents"),
+        str(home / "mira_voice_studio"),
+        str(home / "auto_voice"),
+    ]
+    # Filter to only existing directories
+    allowed_paths = [p for p in allowed_paths if Path(p).exists()]
+
     app = create_app()
     app.launch(
         share=share,
@@ -151,6 +166,7 @@ def launch(
         server_name=server_name,
         debug=debug,
         show_error=True,
+        allowed_paths=allowed_paths,
     )
 
 

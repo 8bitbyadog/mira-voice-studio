@@ -1,76 +1,46 @@
 """
-Generate Tab for Mira Voice Studio.
+Generate Tab for Auto Voice.
 
-Handles text-to-speech generation with preview and export options.
+Simplified TTS generation with custom voice support.
 """
 
 import gradio as gr
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
-import json
 import tempfile
-import threading
+import soundfile as sf
 
 from voice_studio.core.text_processor import TextProcessor
-from voice_studio.core.tts_coqui import CoquiTTS
-from voice_studio.core.tts_gptsovits import GPTSoVITS
-from voice_studio.core.audio_stitcher import AudioStitcher
-from voice_studio.core.aligner import WhisperAligner
-from voice_studio.core.srt_generator import SRTGenerator
-from voice_studio.core.output_manager import OutputManager, GenerationResult
-from voice_studio.core.selection import Selection, SelectionExporter
-from voice_studio.core.manifest import ManifestGenerator
-from voice_studio.core.automation import AutomationProject
-from voice_studio.ui.components.automation_panel import (
-    create_automation_panel,
-    update_sentence_list,
-    get_automation_project,
-)
+from voice_studio.core.tts_edge import EdgeTTS, EDGE_VOICES
+from voice_studio.models.manager import ModelManager
 from voice_studio.utils.settings import get_settings
 from voice_studio.utils.audio_utils import format_duration
 from voice_studio.utils.file_utils import open_in_finder
 
 
-# Global state for the current generation
-_current_result: Optional[GenerationResult] = None
-_current_tts_results: List = []
-_generation_lock = threading.Lock()
-
-
 def get_available_voices() -> List[str]:
-    """Get list of available voices from both engines."""
+    """Get list of available voices including custom trained ones."""
     voices = []
 
-    # Coqui voices
+    # Custom trained voices (show first - these are the user's voices!)
     try:
-        coqui = CoquiTTS()
-        for voice in coqui.list_voices():
-            voices.append(f"coqui:{voice}")
-    except Exception:
-        pass
+        model_manager = ModelManager()
+        custom_models = model_manager.list_models("custom")
+        for model in custom_models:
+            if model.has_reference_audio:
+                voices.append(f"custom:{model.name}")
+    except Exception as e:
+        print(f"Error loading custom voices: {e}")
 
-    # GPT-SoVITS voices
-    try:
-        gptsovits = GPTSoVITS()
-        for voice in gptsovits.list_voices():
-            voices.append(f"gptsovits:{voice}")
-    except Exception:
-        pass
+    # Edge TTS voices (always available as fallback)
+    for voice_id, display_name in EDGE_VOICES.items():
+        voices.append(f"edge:{voice_id}")
 
-    # Default if nothing found
     if not voices:
-        voices = ["coqui:default"]
+        voices = ["edge:en-US-AriaNeural"]
 
     return voices
-
-
-def estimate_duration(text: str) -> str:
-    """Estimate audio duration from text."""
-    processor = TextProcessor()
-    sentences = processor.process(text)
-    stats = processor.get_stats(sentences)
-    return stats.get("estimated_duration", "0:00")
 
 
 def get_text_stats(text: str) -> str:
@@ -85,238 +55,142 @@ def get_text_stats(text: str) -> str:
     return f"Word count: {stats['word_count']} | Sentences: {stats['sentence_count']} | Est. duration: {stats['estimated_duration']}"
 
 
+def browse_for_folder() -> str:
+    """Open a folder picker dialog on macOS."""
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin":
+        return ""
+
+    script = '''
+    tell application "System Events"
+        activate
+        set folderPath to choose folder with prompt "Select Output Folder"
+        return POSIX path of folderPath
+    end tell
+    '''
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+
+    return ""
+
+
 def generate_voiceover(
     text: str,
     voice: str,
     speed: float,
     output_folder: str,
-    word_level: bool,
-    automation_state: Dict = None,
     progress: gr.Progress = gr.Progress()
-) -> Tuple[Optional[str], str, str, Dict]:
+) -> Tuple[Optional[str], str, str]:
     """
-    Generate voiceover from text with optional automation.
+    Generate voiceover from text.
 
     Returns:
-        Tuple of (audio_path, status_message, output_info, generation_data)
+        Tuple of (audio_path, status_message, output_info)
     """
-    global _current_result, _current_tts_results
-
     if not text.strip():
-        return None, "Please enter some text to generate.", "", {}
+        return None, "Please enter some text to generate.", ""
 
-    with _generation_lock:
-        try:
-            progress(0, desc="Initializing...")
+    try:
+        progress(0, desc="Initializing...")
 
-            # Parse automation state
-            automation = get_automation_project(automation_state) if automation_state else None
-            use_automation = automation is not None
+        # Parse voice selection
+        if ":" in voice:
+            engine, voice_name = voice.split(":", 1)
+        else:
+            engine, voice_name = "edge", voice
 
-            # Parse voice selection
-            if ":" in voice:
-                engine, voice_name = voice.split(":", 1)
-            else:
-                engine, voice_name = "coqui", voice
+        # Initialize TTS engine based on voice type
+        progress(0.1, desc=f"Loading {engine} voice...")
 
-            # Initialize TTS engine
-            progress(0.1, desc=f"Loading {engine} engine...")
-
-            if engine == "gptsovits":
-                tts = GPTSoVITS()
-            else:
-                tts = CoquiTTS()
-
+        if engine == "custom":
+            from voice_studio.core.tts_custom import CustomVoiceTTS
+            tts = CustomVoiceTTS()
+            tts.load_voice(voice_name)
+            progress(0.2, desc=f"Loaded custom voice: {voice_name}")
+        else:
+            tts = EdgeTTS()
             tts.load_voice(voice_name)
 
-            # Initialize aligner if word-level requested
-            aligner = None
-            if word_level:
-                progress(0.15, desc="Loading Whisper for alignment...")
-                aligner = WhisperAligner(model_size="base")
+        # Generate audio - send full text to TTS (let it handle phrasing)
+        progress(0.3, desc="Generating audio...")
 
-            # Determine output path
-            if output_folder:
-                output_dir = Path(output_folder)
-            else:
-                settings = get_settings()
-                output_dir = Path(settings.get("output_dir", str(Path.home() / "Videos" / "VO")))
+        # For custom voices, send all text at once for natural phrasing
+        # XTTS handles text splitting internally with enable_text_splitting=True
+        full_audio, sample_rate = tts.synthesize(text, speed=speed)
 
-            # Initialize output manager
-            output_manager = OutputManager(
-                base_output_dir=output_dir,
-                sample_rate=44100,
-                pause_ms=300,
-            )
+        progress(0.85, desc="Processing audio...")
 
-            # Process text
-            progress(0.2, desc="Processing text...")
-            processor = TextProcessor()
-            sentences = processor.process(text)
+        # Determine output path
+        if output_folder:
+            output_dir = Path(output_folder)
+        else:
+            output_dir = Path.home() / "Desktop"
 
-            # Generate TTS with per-sentence automation
-            total_sentences = len(sentences)
-            _current_tts_results = []
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-            for i, sentence in enumerate(sentences):
-                progress_pct = 0.2 + (0.6 * (i / total_sentences))
-                progress(progress_pct, desc=f"Generating sentence {i + 1}/{total_sentences}...")
+        # Generate filename
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"voiceover_{timestamp}.wav"
 
-                # Get speed for this sentence (automation or global)
-                if use_automation:
-                    params = automation.get_sentence_params(sentence.index, total_sentences)
-                    sentence_speed = params.get("speed", speed)
-                else:
-                    sentence_speed = speed
+        progress(0.95, desc="Saving file...")
 
-                result = tts.generate(sentence, speed=sentence_speed)
-                _current_tts_results.append(result)
+        # Save audio
+        sf.write(str(output_path), full_audio, sample_rate)
 
-            # Stitch audio with automation
-            progress(0.85, desc="Stitching audio...")
-            stitcher = AudioStitcher(pause_ms=300, sample_rate=44100)
+        # Cleanup
+        tts.unload()
 
-            if use_automation:
-                progress(0.85, desc="Stitching with automation...")
-                stitched = stitcher.stitch_with_automation(_current_tts_results, automation)
-            else:
-                stitched = stitcher.stitch(_current_tts_results)
+        progress(1.0, desc="Complete!")
 
-            # Run alignment
-            alignment = None
-            if aligner:
-                progress(0.9, desc="Aligning for word-level captions...")
-                try:
-                    alignment = aligner.align(stitched.audio_data, stitched.sample_rate)
-                except Exception as e:
-                    print(f"Alignment warning: {e}")
+        # Calculate duration
+        duration = len(full_audio) / sample_rate
 
-            # Save outputs
-            progress(0.95, desc="Saving files...")
+        # Count sentences for display
+        processor = TextProcessor()
+        sentences = processor.process(text)
+        sentence_count = len(sentences)
 
-            source_name = "script"
-            result = output_manager.generate(
-                text=text,
-                source_name=source_name,
-                tts_engine=tts,
-                aligner=None,  # We already have alignment
-                speed=speed,
-                output_dir=None,
-                generate_word_captions=word_level,
-                progress_callback=None,
-            )
+        output_info = f"""
+**Saved to:** `{output_path}`
 
-            _current_result = result
-
-            # Cleanup
-            tts.unload()
-            if aligner:
-                aligner.unload_model()
-
-            progress(1.0, desc="Complete!")
-
-            # Build output info
-            output_info = f"""
-**Output folder:** `{result.output_dir}`
-
-**Files:**
-- Audio: `{result.master_audio.name}`
-- Captions: `{result.master_srt.name}`
-{f"- Word captions: `{result.master_srt_words.name}`" if result.master_srt_words else ""}
-- VTT: `{result.master_vtt.name}`
-
-**Stats:**
-- {result.manifest.successful_sentences}/{result.manifest.total_sentences} sentences
-- Duration: {format_duration(result.manifest.total_duration_seconds)}
+**Duration:** {format_duration(duration)}
+**Sentences:** {sentence_count}
+**Sample rate:** {sample_rate} Hz
 """
 
-            # Generation data for UI state
-            gen_data = {
-                "output_dir": str(result.output_dir),
-                "audio_path": str(result.master_audio),
-                "duration": result.manifest.total_duration_seconds,
-                "sentences": result.manifest.total_sentences,
-                "chunks": [
-                    {
-                        "index": c.index,
-                        "text": c.text[:30] + "..." if len(c.text) > 30 else c.text,
-                        "start": c.start_time_in_master,
-                        "end": c.end_time_in_master,
-                    }
-                    for c in result.manifest.chunks
-                ]
-            }
-
-            return str(result.master_audio), "Generation complete!", output_info, gen_data
-
-        except Exception as e:
-            return None, f"Error: {str(e)}", "", {}
-
-
-def export_selection(
-    in_time: float,
-    out_time: float,
-    gen_data: Dict
-) -> str:
-    """Export a selection of the audio."""
-    global _current_result
-
-    if _current_result is None:
-        return "No generation to export from. Generate audio first."
-
-    if in_time >= out_time:
-        return "Invalid selection: In point must be before Out point."
-
-    try:
-        selection = Selection(in_time=in_time, out_time=out_time)
-        exporter = SelectionExporter()
-
-        selection_dir = exporter.export(
-            selection=selection,
-            master_audio=_current_result.stitched_audio.audio_data,
-            sample_rate=_current_result.stitched_audio.sample_rate,
-            chunk_timings=_current_result.stitched_audio.chunk_timings,
-            output_dir=_current_result.output_dir,
-            manifest_path=_current_result.manifest_path,
-        )
-
-        in_tc, out_tc = selection.to_timecode()
-        return f"Selection exported: {in_tc} → {out_tc}\nFolder: {selection_dir}"
+        return str(output_path), "Generation complete!", output_info
 
     except Exception as e:
-        return f"Export error: {str(e)}"
+        import traceback
+        traceback.print_exc()
+        return None, f"Error: {str(e)}", ""
 
 
-def export_all_chunks(gen_data: Dict) -> str:
-    """Export all individual sentence chunks."""
-    global _current_result, _current_tts_results
-
-    if _current_result is None:
-        return "No generation to export from. Generate audio first."
-
-    if not _current_tts_results:
-        return "No TTS results available for chunk export."
-
-    try:
-        output_manager = OutputManager()
-        chunks_dir = output_manager.export_chunks(_current_result, _current_tts_results)
-        return f"Chunks exported to: {chunks_dir}"
-
-    except Exception as e:
-        return f"Export error: {str(e)}"
-
-
-def open_output_folder(gen_data: Dict) -> str:
+def open_output_folder_fn(output_folder: str) -> str:
     """Open the output folder in Finder."""
-    if not gen_data or "output_dir" not in gen_data:
-        return "No output folder to open."
-
-    output_dir = Path(gen_data["output_dir"])
-    if output_dir.exists():
-        open_in_finder(output_dir)
-        return f"Opened: {output_dir}"
+    if output_folder:
+        folder = Path(output_folder)
     else:
-        return f"Folder not found: {output_dir}"
+        folder = Path.home() / "Desktop"
+
+    if folder.exists():
+        open_in_finder(folder)
+        return f"Opened: {folder}"
+    else:
+        return f"Folder not found: {folder}"
 
 
 def create_generate_tab() -> Dict[str, Any]:
@@ -331,17 +205,19 @@ def create_generate_tab() -> Dict[str, Any]:
     with gr.Row():
         # Left column: Input controls
         with gr.Column(scale=1):
-            gr.Markdown("### Voice Settings", elem_classes=["section-header"])
+            gr.Markdown("### Voice Settings")
 
             # Voice selection
             voice_dropdown = gr.Dropdown(
                 choices=get_available_voices(),
-                value="coqui:default",
+                value=get_available_voices()[0] if get_available_voices() else "edge:en-US-AriaNeural",
                 label="Voice",
-                info="Select a voice model",
-                elem_id="voice-select"
+                info="Custom voices use XTTS cloning, Edge voices are Microsoft TTS"
             )
             components["voice"] = voice_dropdown
+
+            # Refresh voices button
+            refresh_btn = gr.Button("Refresh Voices", size="sm")
 
             # Speed slider
             speed_slider = gr.Slider(
@@ -354,204 +230,95 @@ def create_generate_tab() -> Dict[str, Any]:
             )
             components["speed"] = speed_slider
 
-            # Word-level captions toggle
-            word_level_checkbox = gr.Checkbox(
-                value=False,
-                label="Word-level captions",
-                info="Generate captions for each word (slower)"
-            )
-            components["word_level"] = word_level_checkbox
-
-            gr.Markdown("### Output", elem_classes=["section-header"])
+            gr.Markdown("### Output")
 
             # Output folder
             output_folder = gr.Textbox(
                 value="",
                 label="Output Folder",
-                placeholder="~/Videos/VO/ (default)",
-                info="Leave empty for default location"
+                placeholder="~/Desktop (default)",
+                info="Leave empty for Desktop"
             )
             components["output_folder"] = output_folder
 
-            browse_btn = gr.Button("Browse...", size="sm")
+            with gr.Row():
+                browse_btn = gr.Button("Browse...", size="sm")
+                open_folder_btn = gr.Button("Open Folder", size="sm")
 
         # Right column: Script input
         with gr.Column(scale=2):
-            gr.Markdown("### Script", elem_classes=["section-header"])
+            gr.Markdown("### Script")
 
             # Text input
             script_input = gr.Textbox(
                 placeholder="Enter your script here...\n\nTip: Each sentence will become a separate audio segment.",
                 lines=10,
                 max_lines=20,
-                label="",
-                elem_classes=["script-input"]
+                label=""
             )
             components["script"] = script_input
 
             # Stats display
-            stats_display = gr.Markdown(
-                "Word count: 0 | Est. duration: 0:00",
-                elem_classes=["stats-row"]
-            )
-
-            # Update stats on text change
-            script_input.change(
-                fn=get_text_stats,
-                inputs=[script_input],
-                outputs=[stats_display]
-            )
+            stats_display = gr.Markdown("Word count: 0 | Est. duration: 0:00")
 
             # Generate button
             generate_btn = gr.Button(
-                "Generate",
+                "Generate Voiceover",
                 variant="primary",
-                size="lg",
-                elem_id="generate-btn"
+                size="lg"
             )
             components["generate_btn"] = generate_btn
 
-    # Automation Panel (Ableton-style per-sentence control)
-    auto_components, auto_state = create_automation_panel()
-    components["automation"] = auto_components
-    components["auto_state"] = auto_state
+    # Status and output
+    status_text = gr.Markdown("")
+    components["status"] = status_text
 
-    # Wire up script input to update automation timeline
-    script_input.change(
-        fn=update_sentence_list,
-        inputs=[script_input, auto_state],
-        outputs=[auto_state, auto_components["timeline"]]
-    )
-
-    # Progress and status
+    # Preview section
     with gr.Row():
         with gr.Column():
-            status_text = gr.Markdown("", elem_classes=["status-text"])
-            components["status"] = status_text
+            gr.Markdown("### Preview")
 
-    # Generation state
-    gen_data = gr.State({})
-    components["gen_data"] = gen_data
-
-    # Preview section (shown after generation)
-    with gr.Row(visible=False) as preview_section:
-        with gr.Column():
-            gr.Markdown("### Preview & Export", elem_classes=["section-header"])
-
-            # Audio player
             audio_player = gr.Audio(
                 label="Generated Audio",
-                type="filepath",
-                elem_classes=["audio-player"]
+                type="filepath"
             )
             components["audio"] = audio_player
 
-            # I/O Selection
-            with gr.Row():
-                with gr.Column(scale=1):
-                    in_time = gr.Number(
-                        value=0,
-                        label="In Point (seconds)",
-                        info="Press I to set at playhead"
-                    )
-                    components["in_time"] = in_time
-
-                with gr.Column(scale=1):
-                    out_time = gr.Number(
-                        value=0,
-                        label="Out Point (seconds)",
-                        info="Press O to set at playhead"
-                    )
-                    components["out_time"] = out_time
-
-            # Selection info
-            selection_info = gr.Markdown("Selection: 0:00 → 0:00 (0:00)")
-
-            # Export buttons
-            gr.Markdown("### Export Options", elem_classes=["section-header"])
-
-            with gr.Row():
-                export_master_btn = gr.Button(
-                    "Export Master",
-                    variant="secondary",
-                    info="Full audio + captions (already saved)"
-                )
-
-                export_selection_btn = gr.Button(
-                    "Export Selection (Cmd+E)",
-                    variant="secondary",
-                    elem_classes=["in-point-button"]
-                )
-
-                export_chunks_btn = gr.Button(
-                    "Export All Chunks (Cmd+Shift+E)",
-                    variant="secondary"
-                )
-
-            # Export status
-            export_status = gr.Markdown("")
-
-            # Output info
-            output_info = gr.Markdown("", elem_classes=["output-files"])
+            output_info = gr.Markdown("")
             components["output_info"] = output_info
 
-            # Open folder button
-            open_folder_btn = gr.Button(
-                "Open in Finder",
-                size="sm"
-            )
-
-    components["preview_section"] = preview_section
-
-    # Wire up the generate button (with automation support)
-    generate_btn.click(
-        fn=generate_voiceover,
-        inputs=[script_input, voice_dropdown, speed_slider, output_folder, word_level_checkbox, auto_state],
-        outputs=[audio_player, status_text, output_info, gen_data],
-    ).then(
-        fn=lambda: gr.update(visible=True),
-        outputs=[preview_section]
-    ).then(
-        fn=lambda data: data.get("duration", 0) if data else 0,
-        inputs=[gen_data],
-        outputs=[out_time]
+    # Wire up events
+    script_input.change(
+        fn=get_text_stats,
+        inputs=[script_input],
+        outputs=[stats_display]
     )
 
-    # Wire up export buttons
-    export_selection_btn.click(
-        fn=export_selection,
-        inputs=[in_time, out_time, gen_data],
-        outputs=[export_status]
-    )
-
-    export_chunks_btn.click(
-        fn=export_all_chunks,
-        inputs=[gen_data],
-        outputs=[export_status]
+    browse_btn.click(
+        fn=browse_for_folder,
+        outputs=[output_folder]
     )
 
     open_folder_btn.click(
-        fn=open_output_folder,
-        inputs=[gen_data],
-        outputs=[export_status]
+        fn=open_output_folder_fn,
+        inputs=[output_folder],
+        outputs=[status_text]
     )
 
-    # Update selection info when in/out change
-    def update_selection_info(in_t: float, out_t: float) -> str:
-        if out_t <= in_t:
-            return "Selection: Invalid (out must be after in)"
-        duration = out_t - in_t
-        return f"Selection: {format_duration(in_t)} → {format_duration(out_t)} ({format_duration(duration)})"
+    def refresh_voices():
+        voices = get_available_voices()
+        return gr.update(choices=voices, value=voices[0] if voices else "edge:en-US-AriaNeural")
 
-    in_time.change(
-        fn=update_selection_info,
-        inputs=[in_time, out_time],
-        outputs=[selection_info]
+    refresh_btn.click(
+        fn=refresh_voices,
+        outputs=[voice_dropdown]
     )
-    out_time.change(
-        fn=update_selection_info,
-        inputs=[in_time, out_time],
-        outputs=[selection_info]
+
+    # Wire up the generate button
+    generate_btn.click(
+        fn=generate_voiceover,
+        inputs=[script_input, voice_dropdown, speed_slider, output_folder],
+        outputs=[audio_player, status_text, output_info]
     )
 
     return components

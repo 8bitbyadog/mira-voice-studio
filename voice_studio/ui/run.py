@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Launch script for Mira Voice Studio UI.
+Launch script for Auto Voice UI.
 
 Usage:
     python -m voice_studio.ui.run
@@ -14,7 +14,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Launch Mira Voice Studio Web UI"
+        description="Launch Auto Voice Web UI"
     )
     parser.add_argument(
         "--port", "-p",
@@ -42,7 +42,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 50)
-    print("Mira Voice Studio")
+    print("Auto Voice")
     print("=" * 50)
     print(f"Starting server on http://{args.host}:{args.port}")
     if args.share:

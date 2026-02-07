@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mira Voice Studio - Command Line Interface
+Auto Voice - Command Line Interface
 
 Generate voiceovers with synced captions from text input.
 """
@@ -17,7 +17,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
         prog="voice_studio",
-        description="Mira Voice Studio - Generate voiceovers with synced captions",
+        description="Auto Voice - Generate voiceovers with synced captions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
@@ -224,7 +224,7 @@ def main():
     # Handle --ui (launch web interface)
     if args.ui:
         from voice_studio.ui import launch
-        print("Launching Mira Voice Studio Web UI...")
+        print("Launching Auto Voice Web UI...")
         launch(server_port=args.port, debug=False)
         sys.exit(0)
 

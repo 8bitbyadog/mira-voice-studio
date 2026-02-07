@@ -1,12 +1,12 @@
 """
-Mira Voice Studio
+Auto Voice
 
 A local TTS application that generates voiceovers with synced SRT captions.
 Optimized for Apple Silicon (M1/M2/M3) with MPS acceleration.
 """
 
 __version__ = "0.1.0"
-__author__ = "Mira Voice Studio"
+__author__ = "Auto Voice"
 
 from voice_studio.config import Config
 from voice_studio.core.text_processor import TextProcessor
