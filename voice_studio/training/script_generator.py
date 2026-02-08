@@ -149,6 +149,25 @@ CONVERSATIONAL_SENTENCES = [
     "That wraps up today's video.",
 ]
 
+# Voice Cloning Paragraphs - 5 relaxed, natural paragraphs covering all phonemes
+# Each paragraph is ~50-75 words, designed to be read in 20-30 seconds
+VOICE_CLONING_PARAGRAPHS = [
+    # Paragraph 1: Casual introduction, covers common consonants and vowels
+    """So yeah, I've been thinking about this for a while now. It's one of those things where you just kind of have to figure it out as you go along. There's no perfect way to do it, you know? You just try different approaches and see what works best for your situation. That's basically how I learned most of what I know.""",
+
+    # Paragraph 2: Storytelling tone, covers th, sh, ch, soft sounds
+    """The other day I was walking through the neighborhood and I noticed something interesting. There was this old bookshop on the corner that I'd never seen before. It had these big wooden shelves filled with all sorts of books. The whole place had that quiet, comfortable feeling. I ended up spending about an hour just browsing through everything.""",
+
+    # Paragraph 3: Explanatory tone, covers hard consonants and varied vowels
+    """Here's the thing about getting better at something. It takes a lot of practice, but it's not just about putting in the hours. You've got to be paying attention to what you're doing. Like, actually thinking about the process and making small adjustments along the way. That's what separates people who improve quickly from those who just stay stuck.""",
+
+    # Paragraph 4: Reflective/thoughtful, covers r, l, w sounds and diphthongs
+    """I really appreciate when people take the time to explain things clearly. It makes such a difference, especially when you're learning something new. The world would be a much better place if more people had that kind of patience. We're all just trying to figure things out, right? A little understanding goes a long way.""",
+
+    # Paragraph 5: Wrap-up tone, covers remaining phonemes and natural endings
+    """Anyway, that's pretty much what I wanted to share with you today. Nothing too complicated, just some thoughts I've had floating around in my head. Hopefully some of it was helpful or at least interesting. Feel free to reach out if you have any questions about any of this stuff. I'm always happy to chat more about it.""",
+]
+
 # Questions for natural speech patterns
 QUESTION_SENTENCES = [
     "What do you think about this approach?",
@@ -281,6 +300,30 @@ class ScriptGenerator:
             for i, text in enumerate(sentences)
         ]
 
+    def generate_voice_cloning_script(
+        self,
+        num_sentences: int = 5
+    ) -> List[ScriptLine]:
+        """Generate 5 paragraphs optimized for voice cloning.
+
+        Each paragraph is designed to:
+        - Be 20-30 seconds when read naturally
+        - Cover different phoneme combinations
+        - Have a relaxed, conversational tone
+        - Include varied sentence structures
+        """
+        paragraphs = VOICE_CLONING_PARAGRAPHS[:num_sentences]
+
+        return [
+            ScriptLine(
+                index=i + 1,
+                text=text.strip(),
+                category="voice_cloning",
+                notes="Read naturally and relaxed, like talking to a friend. Each paragraph should take 20-30 seconds.",
+            )
+            for i, text in enumerate(paragraphs)
+        ]
+
     def generate_mixed_script(
         self,
         num_sentences: int = 50
@@ -354,6 +397,7 @@ class ScriptGenerator:
             "emotional": self.generate_emotional_script,
             "conversational": self.generate_conversational_script,
             "mixed": self.generate_mixed_script,
+            "voice_cloning": self.generate_voice_cloning_script,
         }
 
         generator = generators.get(script_type, self.generate_mixed_script)

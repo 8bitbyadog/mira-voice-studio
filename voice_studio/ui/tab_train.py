@@ -857,8 +857,8 @@ def create_train_tab() -> Dict[str, Any]:
 
                     with gr.Row():
                         script_type = gr.Dropdown(
-                            choices=["mixed", "phoneme", "emotional", "conversational"],
-                            value="mixed",
+                            choices=["voice_cloning", "mixed", "phoneme", "emotional", "conversational"],
+                            value="voice_cloning",
                             label="Script Type"
                         )
                         num_sentences = gr.Slider(

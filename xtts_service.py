@@ -55,14 +55,11 @@ def main():
         ref_path = Path(args.reference)
         ref_files = [args.reference]
 
-        # If this is a combined reference, also try to find individual references
-        if ref_path.name == "reference_combined.wav":
-            refs_dir = ref_path.parent / "references"
-            if refs_dir.exists():
-                individual_refs = sorted(refs_dir.glob("*.wav"))[:10]  # Use up to 10
-                if individual_refs:
-                    ref_files = [str(r) for r in individual_refs]
-                    print(f"Using {len(ref_files)} individual reference files for better accent")
+        # Look for chunked reference files (20-30s each) - better for voice cloning
+        chunk_files = sorted(ref_path.parent.glob("reference_chunk_*.wav"))
+        if chunk_files:
+            ref_files = [str(f) for f in chunk_files]
+            print(f"Using {len(ref_files)} reference chunks for better voice capture")
 
         gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
             audio_path=ref_files
