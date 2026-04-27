@@ -30,11 +30,6 @@ def create_app() -> gr.Blocks:
 
     with gr.Blocks(
         title="Auto Voice",
-        css=custom_css,
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="slate",
-        ),
     ) as app:
         # Header
         gr.Markdown(
@@ -75,13 +70,7 @@ def create_app() -> gr.Blocks:
             elem_classes=["app-footer"]
         )
 
-        # Keyboard shortcut handling via JavaScript
-        app.load(
-            fn=None,
-            inputs=None,
-            outputs=None,
-            js=get_keyboard_js()
-        )
+        pass  # JS loaded via launch()
 
     return app
 
@@ -167,6 +156,12 @@ def launch(
         debug=debug,
         show_error=True,
         allowed_paths=allowed_paths,
+        css=get_custom_css(),
+        js=get_keyboard_js(),
+        theme=gr.themes.Soft(
+            primary_hue="blue",
+            secondary_hue="slate",
+        ),
     )
 
 

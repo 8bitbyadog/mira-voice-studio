@@ -175,17 +175,19 @@ class CustomVoiceTTS(TTSEngine):
         self._backend = "transfer"
         print("Using audio transfer for voice cloning")
 
-    def synthesize(self, text: str, speed: float = 1.0) -> Tuple[np.ndarray, int]:
+    def synthesize(self, text: str, speed: float = 1.0, temperature: float = 0.75) -> Tuple[np.ndarray, int]:
         """
         Synthesize speech in the custom voice.
 
         Args:
             text: Text to synthesize.
             speed: Speaking speed multiplier.
+            temperature: Expressiveness (0.1=flat, 0.85=very expressive).
 
         Returns:
             Tuple of (audio_data, sample_rate).
         """
+        self._temperature = temperature
         if not self._loaded:
             raise TTSError("No voice loaded. Call load_voice() first.")
 
@@ -194,7 +196,7 @@ class CustomVoiceTTS(TTSEngine):
 
         try:
             if self._backend == "xtts_subprocess":
-                return self._synthesize_xtts_subprocess(text, speed)
+                return self._synthesize_xtts_subprocess(text, speed, temperature)
             elif self._backend == "openvoice":
                 return self._synthesize_openvoice(text, speed)
             elif self._backend == "xtts" and self._xtts_model is not None:
@@ -204,7 +206,7 @@ class CustomVoiceTTS(TTSEngine):
         except Exception as e:
             raise TTSError(f"Synthesis failed: {e}")
 
-    def _synthesize_xtts_subprocess(self, text: str, speed: float) -> Tuple[np.ndarray, int]:
+    def _synthesize_xtts_subprocess(self, text: str, speed: float, temperature: float = 0.75) -> Tuple[np.ndarray, int]:
         """Synthesize using XTTS v2 via Python 3.11 subprocess."""
         import tempfile
         import subprocess
@@ -224,7 +226,7 @@ class CustomVoiceTTS(TTSEngine):
             if not service_script.exists():
                 raise FileNotFoundError(f"XTTS service script not found at {service_script}")
 
-            print(f"Running XTTS synthesis via Python 3.11...")
+            print(f"Running XTTS synthesis via Python 3.11 (temperature={temperature})...")
 
             # Call XTTS via Python 3.11
             env = os.environ.copy()
@@ -237,6 +239,7 @@ class CustomVoiceTTS(TTSEngine):
                     "--reference", ref_path,
                     "--output", output_path,
                     "--speed", str(speed),
+                    "--temperature", str(temperature),
                     "--language", "en"
                 ],
                 capture_output=True,

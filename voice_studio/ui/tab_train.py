@@ -914,7 +914,6 @@ def create_train_tab() -> Dict[str, Any]:
                     # Last take preview
                     last_take_audio = gr.Audio(
                         label="Last Take",
-                        type="filepath",
                         interactive=False
                     )
 
@@ -1049,7 +1048,6 @@ def create_train_tab() -> Dict[str, Any]:
                     # Read-only audio preview (just for listening)
                     clip_audio_preview = gr.Audio(
                         label="Original Clip",
-                        type="filepath",
                         interactive=False
                     )
 
@@ -1092,7 +1090,6 @@ def create_train_tab() -> Dict[str, Any]:
                     # Trimmed preview player
                     trim_preview_audio = gr.Audio(
                         label="Trimmed Preview",
-                        type="filepath",
                         interactive=False,
                         visible=True
                     )

@@ -99,6 +99,9 @@ class TextProcessor:
         """
         Clean and normalize text for TTS.
 
+        Preserves prosodic cues (em dashes, ellipses, commas) that TTS models
+        use for natural cadence and rhythm.
+
         Args:
             text: Raw input text.
 
@@ -108,15 +111,15 @@ class TextProcessor:
         # Normalize whitespace
         text = re.sub(r"\s+", " ", text)
 
-        # Remove excessive punctuation
-        text = re.sub(r"([.!?])\1+", r"\1", text)
-
         # Normalize quotes
-        text = text.replace(""", '"').replace(""", '"')
-        text = text.replace("'", "'").replace("'", "'")
+        text = text.replace("\u201c", '"').replace("\u201d", '"')
+        text = text.replace("\u2018", "'").replace("\u2019", "'")
 
-        # Normalize dashes
-        text = text.replace("—", " - ").replace("–", " - ")
+        # Preserve em dashes as commas (natural pause cue for TTS)
+        text = text.replace("\u2014", ",").replace("\u2013", ",")
+
+        # Preserve ellipses (TTS uses them for trailing off / hesitation)
+        text = re.sub(r"\.{3,}", "...", text)
 
         # Remove extra spaces around punctuation
         text = re.sub(r"\s+([.,!?;:])", r"\1", text)

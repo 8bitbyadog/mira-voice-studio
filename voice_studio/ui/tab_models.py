@@ -234,7 +234,6 @@ def create_models_tab() -> Dict[str, Any]:
 
             test_audio = gr.Audio(
                 label="Test Output",
-                type="filepath",
                 interactive=False
             )
 

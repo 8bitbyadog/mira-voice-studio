@@ -90,6 +90,7 @@ def generate_voiceover(
     text: str,
     voice: str,
     speed: float,
+    expressiveness: float,
     output_folder: str,
     progress: gr.Progress = gr.Progress()
 ) -> Tuple[Optional[str], str, str]:
@@ -128,7 +129,10 @@ def generate_voiceover(
 
         # For custom voices, send all text at once for natural phrasing
         # XTTS handles text splitting internally with enable_text_splitting=True
-        full_audio, sample_rate = tts.synthesize(text, speed=speed)
+        if engine == "custom":
+            full_audio, sample_rate = tts.synthesize(text, speed=speed, temperature=expressiveness)
+        else:
+            full_audio, sample_rate = tts.synthesize(text, speed=speed)
 
         progress(0.85, desc="Processing audio...")
 
@@ -230,6 +234,17 @@ def create_generate_tab() -> Dict[str, Any]:
             )
             components["speed"] = speed_slider
 
+            # Expressiveness slider (for custom voices)
+            expressiveness_slider = gr.Slider(
+                minimum=0.1,
+                maximum=0.85,
+                value=0.75,
+                step=0.05,
+                label="Expressiveness",
+                info="Controls cadence variation (0.1 = flat/robotic, 0.75 = natural, 0.85 = very expressive)"
+            )
+            components["expressiveness"] = expressiveness_slider
+
             gr.Markdown("### Output")
 
             # Output folder
@@ -280,7 +295,6 @@ def create_generate_tab() -> Dict[str, Any]:
 
             audio_player = gr.Audio(
                 label="Generated Audio",
-                type="filepath"
             )
             components["audio"] = audio_player
 
@@ -317,7 +331,7 @@ def create_generate_tab() -> Dict[str, Any]:
     # Wire up the generate button
     generate_btn.click(
         fn=generate_voiceover,
-        inputs=[script_input, voice_dropdown, speed_slider, output_folder],
+        inputs=[script_input, voice_dropdown, speed_slider, expressiveness_slider, output_folder],
         outputs=[audio_player, status_text, output_info]
     )
 

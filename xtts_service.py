@@ -24,6 +24,10 @@ def main():
     parser.add_argument("--output", required=True, help="Output audio file path")
     parser.add_argument("--language", default="en", help="Language code (default: en)")
     parser.add_argument("--speed", type=float, default=1.0, help="Speaking speed (default: 1.0)")
+    parser.add_argument("--temperature", type=float, default=0.75, help="Expressiveness (0.1=flat, 0.85=very expressive)")
+    parser.add_argument("--repetition_penalty", type=float, default=5.0, help="Repetition penalty (higher=less monotone)")
+    parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
+    parser.add_argument("--top_p", type=float, default=0.85, help="Top-p (nucleus) sampling")
 
     args = parser.parse_args()
 
@@ -62,7 +66,9 @@ def main():
             print(f"Using {len(ref_files)} reference chunks for better voice capture")
 
         gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
-            audio_path=ref_files
+            audio_path=ref_files,
+            gpt_cond_len=30,           # Use 30s of reference for conditioning (captures more cadence)
+            gpt_cond_chunk_len=6,       # 6s chunks for latent extraction
         )
 
         # Use STREAMING INFERENCE to avoid cutoff bug
@@ -79,8 +85,12 @@ def main():
             gpt_cond_latent,
             speaker_embedding,
             speed=args.speed,
-            stream_chunk_size=20,  # Smaller chunks = less cutoff
-            enable_text_splitting=True,  # Let model handle text splitting
+            temperature=args.temperature,
+            repetition_penalty=args.repetition_penalty,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            stream_chunk_size=40,      # Larger chunks = better cross-phrase prosody
+            enable_text_splitting=True,
         )
 
         # Collect all audio chunks
